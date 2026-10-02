@@ -1,0 +1,23 @@
+# Material con copyright (ROMs, fuente original, datos extraidos): NUNCA subir
+*.zip
+crusnusa/
+roms/
+src_orig/
+program.bin
+gfx.bin
+sound.bin
+*.bin
+generated/
+
+# Salidas de compilacion
+build/
+*.o
+*.elf
+*.cdi
+*.iso
+*.1st_read.bin
+__pycache__/
+.DS_Store
+*.n64
+*.z64
+*.v64

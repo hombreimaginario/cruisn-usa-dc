@@ -1,0 +1,30 @@
+name: build
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  host-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Pruebas de host
+        run: make -f Makefile.host test
+      - name: Comprobar herramientas Python
+        run: python3 -m py_compile tools/*.py
+
+  dreamcast:
+    runs-on: ubuntu-latest
+    container: kazade/dreamcast-sdk:latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compilar con KallistiOS
+        shell: bash
+        run: |
+          source /opt/toolchains/dc/kos/environ.sh
+          make
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cruisn-usa-dc-elf
+          path: cruisn-usa-dc.elf
