@@ -64,6 +64,9 @@ extern uint32_t c3x_break_pc;
 extern void (*c3x_break_cb)(c3x_state *cpu);
 extern uint32_t c3x_pc_ring[64];        /* ultimos PC ejecutados */
 extern unsigned c3x_pc_ring_pos;
+/* Cobertura (array de 16M entradas): bit 0 = ejecutada, bit 1 = se llego
+ * a ella por un salto (entrada de bloque). La usa tools/c31recomp.py. */
+extern uint8_t *c3x_cov;
 void c3x_set_irq(c3x_state *cpu, int bit);   /* activa un bit de IF */
 
 /* ---- Conversion entre el flotante de 32 bits del C3x e IEEE-754 ---- */

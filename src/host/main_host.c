@@ -37,6 +37,25 @@ static void apply_script(const char *script, int frame)
     }
 }
 
+/* Analogicos: CUSA_ANALOG="frame:volante:gas:freno,..." (hex). Cada entrada
+ * se mantiene desde su frame hasta la siguiente. */
+static void apply_analog(const char *script, int frame)
+{
+    const char *p = script;
+    while (p && *p) {
+        int f = 0;
+        unsigned w = 0, g = 0, b = 0;
+        if (sscanf(p, "%d:%x:%x:%x", &f, &w, &g, &b) == 4 && frame >= f) {
+            vu.in.wheel = (uint8_t)w;
+            vu.in.gas = (uint8_t)g;
+            vu.in.brake = (uint8_t)b;
+        }
+        p = strchr(p, ',');
+        if (p)
+            p++;
+    }
+}
+
 static void save_cmos(const char *dir)
 {
     char path[1024];
@@ -167,6 +186,8 @@ int main(int argc, char **argv)
     vu_raise_irq = raise_irq;
     vu.trace_unmapped = getenv("CUSA_TRACE") != NULL;
 
+    if (getenv("CUSA_COVERAGE"))
+        c3x_cov = calloc(0x1000000, 1);
     if (getenv("CUSA_PCHIST"))
         pc_hist = calloc(0x1000000, sizeof(uint32_t));
     vu_reset(program, gfx);
@@ -197,6 +218,8 @@ int main(int argc, char **argv)
         vu.polys_frame = 0;
         if (getenv("CUSA_INPUT"))
             apply_script(getenv("CUSA_INPUT"), frame);
+        if (getenv("CUSA_ANALOG"))
+            apply_analog(getenv("CUSA_ANALOG"), frame);
         while (cpu.cycles < end) {
             next = cpu.cycles + TICK;
             if (next > end)
@@ -230,6 +253,27 @@ int main(int argc, char **argv)
         }
     }
     dump_regs(&cpu);
+    if (c3x_cov) {
+        FILE *f = fopen(getenv("CUSA_COVERAGE"), "r+b");
+        uint8_t *old = calloc(0x1000000, 1);
+        uint32_t a, n = 0;
+        if (f) {                      /* acumula con ejecuciones anteriores */
+            if (fread(old, 1, 0x1000000, f) != 0x1000000)
+                memset(old, 0, 0x1000000);
+            fclose(f);
+        }
+        for (a = 0; a < 0x1000000; a++) {
+            c3x_cov[a] |= old[a];
+            n += c3x_cov[a] != 0;
+        }
+        f = fopen(getenv("CUSA_COVERAGE"), "wb");
+        if (f) {
+            fwrite(c3x_cov, 1, 0x1000000, f);
+            fclose(f);
+        }
+        printf("cobertura: %u instrucciones distintas\n", (unsigned)n);
+        free(old);
+    }
     save_cmos(dir);
     printf("accesos sin mapear:\n");
     vu_report_unmapped();

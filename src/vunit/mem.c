@@ -170,6 +170,9 @@ static void io_write(uint32_t addr, uint32_t v)
         uint32_t ch = (v >> 24) & 0xFF;
         vu.adc_value = ch == 4 ? vu.in.wheel : ch == 5 ? vu.in.gas : ch == 6 ? vu.in.brake : 0;
         vu.adc_irq_delay = 2;
+#ifdef ADC_DEBUG
+        printf("adc: canal %u -> %02X (pc %06X)\n", (unsigned)ch, (unsigned)vu.adc_value, (unsigned)vu_get_pc());
+#endif
         return;
     }
     case 0x994000:

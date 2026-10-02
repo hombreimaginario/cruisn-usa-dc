@@ -994,11 +994,17 @@ static void exec_flow(c3x_state *cpu, uint32_t w, uint32_t addr)
 
 uint32_t c3x_pc_ring[64];
 unsigned c3x_pc_ring_pos;
+uint8_t *c3x_cov;          /* cobertura: 1 = ejecutada, 2 = destino de salto */
+static uint32_t cov_expected;
 
 void c3x_step(c3x_state *cpu)
 {
     uint32_t addr = cpu->pc;
     c3x_pc_ring[c3x_pc_ring_pos++ & 63] = addr;
+    if (c3x_cov) {
+        c3x_cov[addr] |= (addr != cov_expected) ? 3 : 1;
+        cov_expected = addr + 1;
+    }
     uint32_t w = rd(addr);
     int pending_delay = cpu->delay_count;
 
