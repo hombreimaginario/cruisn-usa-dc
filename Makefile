@@ -4,7 +4,9 @@
 TARGET = cruisn-usa-dc.elf
 
 OBJS = src/platform/main_dc.o \
-       src/vunit/mem.o
+       src/c3x/interp.o \
+       src/vunit/mem.o \
+       src/vunit/video.o
 
 KOS_CFLAGS += -std=gnu99 -O2 -Wall -Wextra
 
@@ -24,4 +26,12 @@ $(TARGET): $(OBJS)
 run: $(TARGET)
 	$(KOS_LOADER) $(TARGET)
 
-.PHONY: all clean rm-elf run
+# Imagen de CD con los datos generados por tools/romtool.py (no se versiona).
+MKDCDISC ?= mkdcdisc
+GENERATED ?= generated
+cdi: $(TARGET)
+	$(MKDCDISC) -e $(TARGET) -o cruisn-usa-dc.cdi --allow-overwrite -n "CRUISN USA DC" \
+		-f $(GENERATED)/program.bin -f $(GENERATED)/gfx.bin \
+		$(if $(wildcard $(GENERATED)/cmos.bin),-f $(GENERATED)/cmos.bin)
+
+.PHONY: all clean rm-elf run cdi

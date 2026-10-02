@@ -78,6 +78,10 @@ extern uint64_t (*vu_get_cycles)(void);
 extern uint32_t (*vu_get_pc)(void);
 extern void     (*vu_raise_irq)(int bit);
 
+/* Lectura de la ROM grafica cuando no cabe en memoria (vu.gfx == NULL):
+ * la plataforma la sirve desde disco con una cache de paginas. */
+extern uint32_t (*vu_gfx_fetch)(uint32_t word_index);
+
 void vu_reset(const uint32_t *program, const uint32_t *gfx);
 void vu_tick(void);                       /* llamar cada ~1000 instrucciones */
 void vu_report_unmapped(void);

@@ -21,6 +21,7 @@ static void no_irq(int bit) { (void)bit; }
 uint64_t (*vu_get_cycles)(void) = no_cycles;
 uint32_t (*vu_get_pc)(void) = no_pc;
 void     (*vu_raise_irq)(int bit) = no_irq;
+uint32_t (*vu_gfx_fetch)(uint32_t word_index);
 
 /* ---- registro de accesos sin mapear ---- */
 
@@ -224,7 +225,8 @@ uint32_t c3x_mem_read(uint32_t addr)
         if (addr - VU_PROGROM_BASE < VU_PROGRAM_WORDS)
             return vu.program[addr - VU_PROGROM_BASE];
         if (addr - VU_GFXROM_BASE < VU_GFXROM_WORDS)
-            return vu.gfx ? vu.gfx[addr - VU_GFXROM_BASE] : 0;
+            return vu.gfx ? vu.gfx[addr - VU_GFXROM_BASE]
+                 : vu_gfx_fetch ? vu_gfx_fetch(addr - VU_GFXROM_BASE) : 0;
         return 0;
     }
     unmapped(0, addr, 0);

@@ -219,7 +219,7 @@ static uint32_t ea_indirect(c3x_state *cpu, int mod, int arn, int32_t disp)
     case 0x18: return a;
     case 0x19: *ar = bitrev_add(a, cpu->r[C3X_IR0]); return a;
     default:
-        fprintf(stderr, "c3x: modo indirecto %02X no valido en %06X\n", mod, cpu->pc);
+        fprintf(stderr, "c3x: modo indirecto %02X no valido en %06X\n", mod, (unsigned)cpu->pc);
         return a;
     }
 }
@@ -704,7 +704,7 @@ static void exec_general(c3x_state *cpu, uint32_t w)
         (void)rd(a);
         break;
     default:
-        fprintf(stderr, "c3x: opcode %02X no implementado en %06X (%08X)\n", op, cpu->pc - 1, w);
+        fprintf(stderr, "c3x: opcode %02X no implementado en %06X (%08X)\n", op, (unsigned)(cpu->pc - 1), (unsigned)w);
         break;
     }
 }
@@ -752,7 +752,7 @@ static void exec_three(c3x_state *cpu, uint32_t w)
     case 0x0F: res = s1 & s2; logic_flags(cpu, res, -1); break;                  /* TSTB3 */
     case 0x10: res = s1 ^ s2; logic_flags(cpu, res, d); REG(d) = res; break;     /* XOR3 */
     default:
-        fprintf(stderr, "c3x: opcode 3op %02X no implementado en %06X\n", op, cpu->pc - 1);
+        fprintf(stderr, "c3x: opcode 3op %02X no implementado en %06X\n", op, (unsigned)(cpu->pc - 1));
         break;
     }
 }
@@ -882,7 +882,7 @@ static void exec_par_store(c3x_state *cpu, uint32_t w)
     case 0x16: REG(r1) = op_sub(cpu, v, REG(rs1), 0, r1); break;
     case 0x17: res = v ^ REG(rs1); logic_flags(cpu, res, r1); REG(r1) = res; break;
     default:
-        fprintf(stderr, "c3x: paralela %02X no implementada en %06X\n", op, cpu->pc - 1);
+        fprintf(stderr, "c3x: paralela %02X no implementada en %06X\n", op, (unsigned)(cpu->pc - 1));
         return;
     }
     /* El store usa el valor del registro anterior a la operacion. */
@@ -928,7 +928,7 @@ static void exec_flow(c3x_state *cpu, uint32_t w, uint32_t addr)
         return;
     }
     if (hi == 0x66) {                         /* SWI */
-        fprintf(stderr, "c3x: SWI en %06X\n", addr);
+        fprintf(stderr, "c3x: SWI en %06X\n", (unsigned)addr);
         return;
     }
     cond = (w >> 16) & 0x1F;
@@ -985,7 +985,7 @@ static void exec_flow(c3x_state *cpu, uint32_t w, uint32_t addr)
         }
         break;
     }
-    fprintf(stderr, "c3x: instruccion de flujo desconocida %08X en %06X\n", w, addr);
+    fprintf(stderr, "c3x: instruccion de flujo desconocida %08X en %06X\n", (unsigned)w, (unsigned)addr);
 }
 
 /* ------------------------------------------------------------------------ */
