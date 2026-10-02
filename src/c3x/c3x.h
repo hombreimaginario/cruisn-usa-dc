@@ -35,17 +35,36 @@ enum {
 #define C3X_ST_GIE  0x2000u
 
 /*
- * Los registros R0-R7 son de precision extendida (40 bits) en el hardware.
- * Guardamos la parte entera de 32 bits (lo que ven LDI/STI) y el valor
- * flotante por separado en formato IEEE para que las operaciones en coma
- * flotante sean rapidas en la FPU del SH-4. La conversion al formato C3x solo
- * se hace al leer o escribir memoria (LDF/STF), que es donde importa.
+ * Los registros R0-R7 son de precision extendida (40 bits): exponente de 8
+ * bits con signo + mantisa de 32 bits (signo en el bit 31). Las operaciones
+ * enteras solo tocan los 32 bits bajos (r[n]); las de coma flotante escriben
+ * tambien exp[n]. El resto de registros son de 32 bits.
  */
 typedef struct {
-    uint32_t r[C3X_NUM_REGS];   /* parte entera / registros auxiliares */
-    float    f[8];              /* vista flotante de R0-R7 */
-    uint32_t pc;                /* solo para depuracion y despacho indirecto */
+    uint32_t r[C3X_NUM_REGS];   /* R0-R7: mantisa/entero; resto: valor */
+    int32_t  exp[8];            /* exponente de R0-R7 (-128 = cero) */
+    uint32_t pc;
+    uint32_t delay_target;      /* salto retardado pendiente */
+    int      delay_count;
+    int      idle;              /* ejecutando IDLE: espera interrupcion */
+    uint64_t cycles;            /* instrucciones ejecutadas */
 } c3x_state;
+
+/* Bus de memoria: lo implementa el hardware (vunit/mem.c). */
+uint32_t c3x_mem_read(uint32_t addr);
+void     c3x_mem_write(uint32_t addr, uint32_t value);
+
+/* Interprete de referencia (c3x/interp.c). */
+void c3x_reset(c3x_state *cpu);
+void c3x_run(c3x_state *cpu, uint64_t until_cycle);
+void c3x_step(c3x_state *cpu);
+
+/* Depuracion: se llama a c3x_break_cb cada vez que el PC llega a c3x_break_pc. */
+extern uint32_t c3x_break_pc;
+extern void (*c3x_break_cb)(c3x_state *cpu);
+extern uint32_t c3x_pc_ring[64];        /* ultimos PC ejecutados */
+extern unsigned c3x_pc_ring_pos;
+void c3x_set_irq(c3x_state *cpu, int bit);   /* activa un bit de IF */
 
 /* ---- Conversion entre el flotante de 32 bits del C3x e IEEE-754 ---- */
 

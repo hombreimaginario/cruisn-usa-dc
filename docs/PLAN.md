@@ -21,6 +21,13 @@ Alternativas descartadas:
 - [x] `src/vunit/mem.*`: mapa de memoria del V-Unit.
 - [x] Esqueleto KallistiOS y CI (pruebas de host + compilación con el SDK de Dreamcast).
 
+### Fase 1b: Intérprete de referencia y arranque en host (hecho)
+- [x] `src/c3x/interp.c`: intérprete completo del C31 (saltos retardados, RPTB/RPTS, paralelas, interrupciones, flotantes de 40 bits).
+- [x] `src/vunit/`: bus, temporizadores, entradas, ADC, CMOS, paleta, WAVERAM y motor de polígonos en software.
+- [x] `build/cusa_host`: ejecuta la ROM en el ordenador y vuelca fotogramas. Arranca, pasa los tests de memoria, calibra controles y llega al modo demo con la escena 3D correcta.
+- [x] `tools/mame/`: comparación de registros con MAME en puntos de ruptura para depurar divergencias.
+- Hallazgo: la ROM gráfica empieza en `0xC80000` (justo tras el programa), no en `0xD00000`.
+
 ### Fase 1: Recompilador (`tools/c31recomp.py`)
 - Descubrimiento de código a partir de los vectores, `CALL`, saltos y tablas de punteros; símbolos tomados de la fuente (etiquetas de `DIRQ.ASM`, `MPROC.ASM`...).
 - Emisión de C por bloque básico sobre `c3x_state`, con:
@@ -32,8 +39,9 @@ Alternativas descartadas:
 - Prueba de referencia: ejecutar el mismo código recompilado en el host (macOS/Linux) y compararlo con un intérprete sencillo del C31 instrucción a instrucción.
 
 ### Fase 2: Arranque en host
-- Ejecutar el juego recompilado en el host con un volcado de la FIFO de polígonos a imagen (SDL u otro) para depurar sin hardware Dreamcast.
-- Implementar temporizadores, interrupciones (`DIRQ` por vblank), entradas, CMOS y paleta.
+- [x] Volcado de fotogramas a PPM con el renderizador por software.
+- [x] Temporizadores, interrupciones (INT0 a 57 Hz, INT3 del ADC), entradas, CMOS y paleta.
+- [ ] Ventana interactiva (SDL) para jugar en el ordenador.
 
 ### Fase 3: Vídeo en Dreamcast
 - Traducción de la FIFO de polígonos a listas del PVR (opacos y transparentes), con Z.

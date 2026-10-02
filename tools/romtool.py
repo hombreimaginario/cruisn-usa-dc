@@ -11,7 +11,8 @@ Uso:
 
 Genera:
     program.bin   imagen de programa entrelazada (palabras LE de 32 bits)
-    gfx.bin       ROM de texturas/graficos u14..u29 concatenadas (raw)
+    gfx.bin       ROM de graficos u14..u29: 4 bancos de 4 chips entrelazados en
+                  palabras LE de 32 bits; el C31 la ve en 0xD00000
     sound.bin     ROM de sonido DCS u2..u9 concatenadas (raw)
 
 Ningun fichero generado debe subirse al repositorio (ver .gitignore).
@@ -93,7 +94,8 @@ def main():
     with open(os.path.join(a.outdir, "program.bin"), "wb") as f:
         f.write(prog)
 
-    gfx = b"".join(roms.get("cusa.u%d" % n) for n in range(14, 30))
+    gfx = b"".join(interleave32([roms.get("cusa.u%d" % n) for n in range(b, b + 4)])
+                   for b in (14, 18, 22, 26))
     with open(os.path.join(a.outdir, "gfx.bin"), "wb") as f:
         f.write(gfx)
 

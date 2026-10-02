@@ -2,18 +2,23 @@
 CC ?= cc
 CFLAGS ?= -O2 -Wall -Wextra -std=c99
 
-test: build/test_c3x_float build/mem.o
+test: build/test_c3x_float build/cusa_host
 	./build/test_c3x_float
 
-build/mem.o: src/vunit/mem.c src/vunit/mem.h
-	@mkdir -p build
-	$(CC) $(CFLAGS) -c -o $@ src/vunit/mem.c
 
 build/test_c3x_float: tests/test_c3x_float.c src/c3x/c3x.h
 	@mkdir -p build
 	$(CC) $(CFLAGS) -o $@ tests/test_c3x_float.c -lm
 
+HOST_SRCS = src/host/main_host.c src/c3x/interp.c src/vunit/mem.c src/vunit/video.c
+
+build/cusa_host: $(HOST_SRCS) src/c3x/c3x.h src/vunit/mem.h
+	@mkdir -p build
+	$(CC) $(CFLAGS) -o $@ $(HOST_SRCS) -lm
+
+host: build/cusa_host
+
 clean:
 	rm -rf build
 
-.PHONY: test clean
+.PHONY: test host clean
