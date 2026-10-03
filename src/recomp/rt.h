@@ -50,6 +50,8 @@ typedef struct {
 /* Generado */
 extern const rt_region rt_regions[];
 extern const unsigned rt_num_regions;
+extern const uint32_t rt_entries[];         /* entradas de bloque, ordenadas */
+extern const unsigned rt_num_entries;
 
 /* Runtime */
 uint32_t rt_dispatch(uint32_t pc);            /* ejecuta una region desde pc */

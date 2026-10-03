@@ -32,12 +32,83 @@ static const rt_region *find_region(uint32_t pc)
     return NULL;
 }
 
+static int is_entry(uint32_t pc)
+{
+    unsigned lo = 0, hi = rt_num_entries;
+    while (lo < hi) {
+        unsigned mid = (lo + hi) / 2;
+        if (rt_entries[mid] < pc)
+            lo = mid + 1;
+        else
+            hi = mid;
+    }
+    return lo < rt_num_entries && rt_entries[lo] == pc;
+}
+
+/*
+ * Codigo que la cobertura no vio (partes del juego que no se ejercitaron al
+ * generar generated/coverage.bin): se ejecuta con el interprete de
+ * referencia hasta llegar a un bloque recompilado. Lento, pero el juego
+ * sigue en vez de abortar.
+ */
+unsigned long rt_interp_steps;
+
 uint32_t rt_unknown(uint32_t pc)
 {
-    fprintf(stderr, "rt: PC %06X sin codigo recompilado (ciclo %llu, sp %06X)\n",
-            (unsigned)pc, (unsigned long long)rt_cycles(), (unsigned)C.r[C3X_SP]);
-    abort();
-    return pc;
+    static c3x_state ic;
+    static int warned;
+    int n, k;
+    uint64_t next_ev;
+
+    if (!warned) {
+        warned = 1;
+        fprintf(stderr, "rt: PC %06X sin codigo recompilado, se interpreta\n", (unsigned)pc);
+    }
+    memset(&ic, 0, sizeof(ic));
+    for (n = 0; n < 8; n++) {
+        SYNC_I(n);
+        ic.exp[n] = C.e[n];
+    }
+    for (n = 8; n < C3X_NUM_REGS; n++)
+        ic.r[n] = C.r[n];
+    for (n = 0; n < 8; n++)
+        ic.r[n] = C.r[n];
+    ic.pc = pc & 0xFFFFFF;
+    if (c3x_cov)
+        c3x_cov[ic.pc] |= 3;            /* entrada de bloque para la cobertura */
+    ic.cycles = rt_cycles();
+    next_ev = ic.cycles + RT_EVENT_PERIOD;
+    for (k = 0;; k++) {
+        if (k && !ic.delay_count && is_entry(ic.pc))
+            break;
+        /* interrupciones y eventos de la plataforma como en rt_service */
+        if (!rt_irq_disabled && ic.cycles >= next_ev) {
+            next_ev = ic.cycles + RT_EVENT_PERIOD;
+            rt_set_cycles(ic.cycles);
+            rt_platform_event();
+            ic.r[C3X_IF] |= C.r[C3X_IF];
+            C.r[C3X_IF] = 0;
+        }
+        c3x_run(&ic, ic.cycles + 1);
+        if (ic.idle) {
+            ic.idle = 0;
+            rt_set_cycles(ic.cycles);
+            rt_platform_idle();
+            ic.cycles = rt_cycles();
+            ic.r[C3X_IF] |= C.r[C3X_IF];
+            C.r[C3X_IF] = 0;
+        }
+        rt_interp_steps++;
+    }
+    for (n = 0; n < C3X_NUM_REGS; n++)
+        C.r[n] = ic.r[n];
+    for (n = 0; n < 8; n++) {
+        C.e[n] = ic.exp[n];
+        C.rk[n] = 2;
+    }
+    rt_set_cycles(ic.cycles);
+    RT_FORCE_CHECK();
+    return ic.pc;
 }
 
 uint32_t rt_dispatch(uint32_t pc)

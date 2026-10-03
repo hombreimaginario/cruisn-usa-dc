@@ -205,6 +205,28 @@ void rt_platform_event(void)
     }
     vu.polys_frame = 0;
     if (frame >= frames) {
+        if (c3x_cov) {
+            /* CUSA_COVERAGE: el codigo que hizo falta interpretar se suma a la
+             * cobertura (como en cusa_host) para la siguiente recompilacion */
+            FILE *f = fopen(getenv("CUSA_COVERAGE"), "r+b");
+            uint8_t *old = calloc(0x1000000, 1);
+            uint32_t a, n = 0;
+            if (f) {
+                if (fread(old, 1, 0x1000000, f) != 0x1000000)
+                    memset(old, 0, 0x1000000);
+                fclose(f);
+            }
+            for (a = 0; a < 0x1000000; a++) {
+                n += c3x_cov[a] && !old[a];
+                c3x_cov[a] |= old[a];
+            }
+            f = fopen(getenv("CUSA_COVERAGE"), "wb");
+            if (f) {
+                fwrite(c3x_cov, 1, 0x1000000, f);
+                fclose(f);
+            }
+            printf("cobertura: %u instrucciones nuevas\n", (unsigned)n);
+        }
         printf("%d frames en %.2f s (%lu esperas saltadas)\n", frames, (double)(clock() - t_start) / CLOCKS_PER_SEC, idle_calls);
         if (getenv("CUSA_POLYSTATS")) {
             int k;
@@ -267,6 +289,8 @@ int main(int argc, char **argv)
         vu_poly_hook = stats_hook;
     if (getenv("CUSA_SOUNDLOG"))
         vu_sound_hook = sound_hook;
+    if (getenv("CUSA_COVERAGE"))
+        c3x_cov = calloc(0x1000000, 1);
     rt_reset();
 #ifdef RT_TRACE_ON
     prof_cycles = calloc(0x1000000, sizeof(uint64_t));

@@ -94,15 +94,31 @@ void vu_reset(const uint32_t *program, const uint32_t *gfx)
  * sustituyendo sus CALL por NOP. Devuelve el numero de parches aplicados. */
 int vu_skip_memtests(void)
 {
-    static const struct { uint32_t addr, word; } calls[] = {
-        { 0x004AFF, 0x620062D5u },   /* CALL TEST_STATIC_CHIPS */
-        { 0x004B17, 0x62006381u },   /* CALL TEST_CHIPS */
+    /* Parches del port (los mismos en tools/c31recomp.py, PORT_PATCHES):
+     * sin tests de memoria al arrancar y sin el logo de Nintendo 64 del
+     * modo demo (_MIDWAYSPIN, ATTRACTA.ASM), que en Dreamcast no pinta nada;
+     * juego libre siempre. */
+    static const struct { uint32_t addr, word, repl; } patches[] = {
+        { 0x004AFF, 0x620062D5u, 0x0C800000u },   /* CALL TEST_STATIC_CHIPS -> NOP */
+        { 0x004B17, 0x62006381u, 0x0C800000u },   /* CALL TEST_CHIPS -> NOP */
+        { 0x00A949, 0x086E037Au, 0x086E0000u },   /* LDI 890,AR6 -> LDI 0,AR6 */
+        { 0x00A94B, 0x620091E0u, 0x0C800000u },   /* SOND1 NINTENDO_SND -> NOP */
+        { 0x00A94C, 0x62001DCFu, 0x0C800000u },   /* CALL ULTRA_LOGO -> NOP */
+        /* Juego libre siempre (consola): las lecturas del ajuste FREE PLAY
+         * devuelven 1. Solo cambia "INSERT COINS" por "PRESS START" y no se
+         * piden creditos; el modo demo no cambia. */
+        { 0x000DFC, 0x620099E9u, 0x08600001u },   /* READADJ ADJ_FREE_PLAY -> LDI 1,R0 */
+        { 0x001D82, 0x620099E9u, 0x08600001u },   /* READADJ ADJ_FREE_PLAY -> LDI 1,R0 */
+        { 0x001E79, 0x620099E9u, 0x08600001u },   /* READADJ ADJ_FREE_PLAY -> LDI 1,R0 */
+        { 0x004E56, 0x620099E9u, 0x08600001u },   /* READADJ ADJ_FREE_PLAY -> LDI 1,R0 */
+        { 0x007463, 0x620099E9u, 0x08600001u },   /* READADJ ADJ_FREE_PLAY -> LDI 1,R0 */
+        { 0x0075B1, 0x620099E9u, 0x08600001u },   /* READADJ ADJ_FREE_PLAY -> LDI 1,R0 */
     };
     unsigned i;
     int n = 0;
-    for (i = 0; i < sizeof(calls) / sizeof(calls[0]); i++) {
-        if (vu.fastram[calls[i].addr] == calls[i].word) {
-            vu.fastram[calls[i].addr] = 0x0C800000u;   /* NOP */
+    for (i = 0; i < sizeof(patches) / sizeof(patches[0]); i++) {
+        if (vu.fastram[patches[i].addr] == patches[i].word) {
+            vu.fastram[patches[i].addr] = patches[i].repl;
             n++;
         }
     }

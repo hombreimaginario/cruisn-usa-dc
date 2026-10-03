@@ -38,6 +38,10 @@ build/cusa_host generated 4200 0
 CUSA_SKIPTESTS=1 CUSA_COVERAGE=generated/coverage.bin build/cusa_host generated 3000 0
 python3 tools/c31recomp.py generated/program.bin generated/recomp --coverage generated/coverage.bin
 make -f Makefile.host recomp difftest      # cusa_recomp y la prueba diferencial
+# Cobertura del resto del modo demo y de una carrera (rapido, con el recompilado);
+# lo que falte se interpreta, asi que despues se recompila otra vez
+CUSA_COVERAGE=generated/coverage.bin build/cusa_recomp generated 20000 0
+python3 tools/c31recomp.py generated/program.bin generated/recomp --coverage generated/coverage.bin
 
 # 6. Sonido (opcional, necesita MAME): graba la placa DCS y crea generated/sound.bin
 tools/make_sound.sh ~/ruta/a/roms/de/mame

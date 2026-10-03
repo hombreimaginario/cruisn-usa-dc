@@ -585,6 +585,30 @@ static void dump_shot(void)
 {
     const uint16_t *p;
     int x, y;
+#ifdef CUSA_SHOT_FULL
+    /* 640x480 completos, cada linea en base64 (RGB565 little endian) */
+    static const char b64[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    static char line[1280 / 3 * 4 + 32];
+
+    pvr_wait_ready();
+    pvr_wait_ready();
+    p = (const uint16_t *)shot_tex;
+    for (y = 0; y < 480; y++) {
+        const uint8_t *b = (const uint8_t *)(p + y * 640);
+        char *o = line + sprintf(line, "SHOTF %03d ", y);
+        for (x = 0; x + 2 < 1280; x += 3) {
+            uint32_t v = b[x] << 16 | b[x + 1] << 8 | b[x + 2];
+            *o++ = b64[v >> 18]; *o++ = b64[(v >> 12) & 63];
+            *o++ = b64[(v >> 6) & 63]; *o++ = b64[v & 63];
+        }
+        {   /* 1280 = 3*426 + 2 */
+            uint32_t v = b[1278] << 16 | b[1279] << 8;
+            *o++ = b64[v >> 18]; *o++ = b64[(v >> 12) & 63]; *o++ = b64[(v >> 6) & 63]; *o++ = '=';
+        }
+        *o = 0;
+        puts(line);
+    }
+#else
     char line[160 * 4 + 16];
 
     pvr_wait_ready();
@@ -593,11 +617,11 @@ static void dump_shot(void)
     for (y = 0; y < 120; y++) {
         char *o = line;
         o += sprintf(o, "SHOT %03d ", y);
-        (void)0;
         for (x = 0; x < 160; x++)
             o += sprintf(o, "%04X", p[(y * 4) * 640 + x * 4]);
         puts(line);
     }
+#endif
 }
 
 void pvrr_init(void)

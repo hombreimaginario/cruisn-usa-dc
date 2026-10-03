@@ -38,6 +38,23 @@ IDLE_HINTS = {
 
 # Rutinas sustituidas por codigo nativo (src/recomp/hle.c): al llegar a la
 # direccion se llama a la funcion, que devuelve el siguiente PC.
+# Parches del port: sin tests de memoria, sin el logo de Nintendo 64 y en
+# juego libre (ver vu_skip_memtests en src/vunit/mem.c)
+PORT_PATCHES = (
+    (0x004AFF, 0x620062D5, 0x0C800000),   # CALL TEST_STATIC_CHIPS -> NOP
+    (0x004B17, 0x62006381, 0x0C800000),   # CALL TEST_CHIPS -> NOP
+    (0x00A949, 0x086E037A, 0x086E0000),   # LDI 890,AR6 -> LDI 0,AR6
+    (0x00A94B, 0x620091E0, 0x0C800000),   # SOND1 NINTENDO_SND -> NOP
+    (0x00A94C, 0x62001DCF, 0x0C800000),   # CALL ULTRA_LOGO -> NOP
+    # juego libre siempre
+    (0x000DFC, 0x620099E9, 0x08600001),   # READADJ ADJ_FREE_PLAY -> LDI 1,R0
+    (0x001D82, 0x620099E9, 0x08600001),   # READADJ ADJ_FREE_PLAY -> LDI 1,R0
+    (0x001E79, 0x620099E9, 0x08600001),   # READADJ ADJ_FREE_PLAY -> LDI 1,R0
+    (0x004E56, 0x620099E9, 0x08600001),   # READADJ ADJ_FREE_PLAY -> LDI 1,R0
+    (0x007463, 0x620099E9, 0x08600001),   # READADJ ADJ_FREE_PLAY -> LDI 1,R0
+    (0x0075B1, 0x620099E9, 0x08600001),   # READADJ ADJ_FREE_PLAY -> LDI 1,R0
+)
+
 HLE_HOOKS = {
     0x00A334: ("hle_lzw_segment", None),   # COMP.ASM DECOMPRESS_TOPLP3
     0x000141: ("hle_vtx_dirq", 0x000163),  # DIRQ.ASM bucle de vertices
@@ -1591,9 +1608,9 @@ def main():
     data = open(a.program, "rb").read()
     words = list(struct.unpack("<%dI" % (len(data) // 4), data))
     # Mismos parches que vu_skip_memtests() (src/vunit/mem.c)
-    for addr, word in ((0x004AFF, 0x620062D5), (0x004B17, 0x62006381)):
+    for addr, word, repl in PORT_PATCHES:
         if words[addr] == word:
-            words[addr] = 0x0C800000
+            words[addr] = repl
     cov = None
     if a.coverage and os.path.exists(a.coverage):
         with open(a.coverage, "rb") as f:
@@ -1642,6 +1659,13 @@ def main():
     for s, e in bounds:
         table.append("    { 0x%06XU, 0x%06XU, rg_%06X }," % (s, e, s))
     table += ['};', 'const unsigned rt_num_regions = %d;' % len(bounds), '']
+    # Entradas de bloque: el interprete de reserva (rt_unknown) vuelve al
+    # codigo recompilado en cuanto llega a una de ellas.
+    table.append('const uint32_t rt_entries[] = {')
+    ents = sorted(blocks)
+    for k in range(0, len(ents), 8):
+        table.append('    ' + ' '.join('0x%06XU,' % x for x in ents[k:k + 8]))
+    table += ['};', 'const unsigned rt_num_entries = %d;' % len(ents), '']
     with open(os.path.join(a.outdir, "rc_table.c"), "w") as f:
         f.write("\n".join(table))
     files.append("rc_table.c")
