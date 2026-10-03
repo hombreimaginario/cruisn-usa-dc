@@ -111,7 +111,9 @@ static mutex_t mus_lock = MUTEX_INITIALIZER;
 static int mus_playing;
 static volatile int mus_start_req;      /* 1 = rellenar las dos mitades, 2 = listas */
 static int mus_start_vol;
-static volatile int mus_fills;          /* depuracion: mitades leidas */
+/* Depuracion: mitades leidas. No usar printf desde el hilo lector: en
+ * Flycast deja colgado el juego en cuanto arranca la musica. */
+static volatile int mus_fills;
 
 static void mus_fill(int half)
 {

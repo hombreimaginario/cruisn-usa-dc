@@ -228,9 +228,9 @@ void rt_platform_event(void)
          * espera; si vamos atrasados no se recupera (el juego se ralentiza). */
         static uint64_t next_us;
         uint64_t now = timer_us_gettime64();
-        if (!next_us || now > next_us + 100000)
-            next_us = now;
         next_us += 1000000 / 57;
+        if (next_us + 100000 < now)
+            next_us = now;              /* muy atrasados: no esperar nunca */
         while (timer_us_gettime64() < next_us)
             thd_pass();
     }
@@ -296,6 +296,9 @@ int main(int argc, char **argv)
 
 #ifdef CUSA_RECOMP
     pvrr_init();
+#ifdef CUSA_SHOT
+    pvrr_reserve_shot();
+#endif
     if (sound_init("/cd/sound.bin") == 0)
         vu_sound_hook = sound_dcs_write;
     vu_get_cycles = rc_cycles;

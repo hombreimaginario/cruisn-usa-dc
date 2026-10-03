@@ -48,6 +48,9 @@ typedef struct {
     uint16_t w, h;              /* tamano (potencias de 2) */
     uint8_t  u0, v0;            /* esquina en la pagina de 256x256 */
     uint8_t  pt;                /* lista punch-through */
+    uint16_t seq;               /* orden de primer uso en el frame actual */
+    uint32_t seq_frame;
+    float iw, ih;               /* 1/w, 1/h */
 } tex_entry;
 
 /* ---- asignador "buddy" para texturas dentro de un bloque fijo de VRAM ----
@@ -239,7 +242,38 @@ static void pow2(uint32_t span, uint32_t *size, uint32_t *cls)
     *cls = c;
 }
 
-static tex_entry *get_texture(const uint32_t *d)
+/* Cache directa de las busquedas del frame actual: muchos poligonos usan el
+ * mismo rectangulo de textura y ya se valido en este frame. */
+#define LC_SIZE 2048
+typedef struct {
+    uint32_t w[5];              /* base|pal, control, uv0..uv3 combinados */
+    uint32_t frame;
+    tex_entry *t;
+} lookup_entry;
+static lookup_entry lcache[LC_SIZE];
+
+static tex_entry *get_texture_slow(const uint32_t *d);
+
+static inline tex_entry *get_texture(const uint32_t *d)
+{
+    uint32_t a = (d[14] & 0x7FFF) | ((d[1] & 0x7F00) << 8);
+    uint32_t b = d[0] & 0xCFF;
+    uint32_t c = (d[10] & 0xFFFF) | (d[11] << 16);
+    uint32_t e = (d[12] & 0xFFFF) | (d[13] << 16);
+    uint32_t h = (a * 2654435761u) ^ (b * 0x9E3779B1u) ^ (c * 0x85EBCA77u) ^ (e * 0xC2B2AE3Du);
+    lookup_entry *l = &lcache[(h >> 16) & (LC_SIZE - 1)];
+    tex_entry *t;
+
+    if (l->frame == frame_no && l->w[0] == a && l->w[1] == b && l->w[2] == c && l->w[3] == e)
+        return l->t;
+    t = get_texture_slow(d);
+    l->w[0] = a; l->w[1] = b; l->w[2] = c; l->w[3] = e;
+    l->frame = frame_no;
+    l->t = t;
+    return t;
+}
+
+static tex_entry *get_texture_slow(const uint32_t *d)
 {
     tex_req r;
     uint32_t umin = 255, umax = 0, vmin = 255, vmax = 0, slot, k, g, pg;
@@ -287,6 +321,8 @@ static tex_entry *get_texture(const uint32_t *d)
             t->u0 = (uint8_t)r.u0;
             t->v0 = (uint8_t)r.v0;
             t->pt = (r.zs || r.nzr) ? 1 : 0;
+            t->iw = 1.0f / (float)r.w;
+            t->ih = 1.0f / (float)r.h;
             t->blk_sum = ~g;         /* fuerza la conversion */
             break;
         }
@@ -346,43 +382,37 @@ typedef struct {
     float z;
 } draw_item;
 
-static draw_item items[MAX_POLYS];
+/* Poligonos del frame ordenados por textura (orden de primer uso), por
+ * separado para la lista opaca y la punch-through. El orden de dibujo del
+ * original lo mantiene la Z. */
+static draw_item items[2][MAX_POLYS];
+static draw_item unsorted[MAX_POLYS];
+static uint16_t seq_count[2][MAX_POLYS + 1];
 
-static int cmp_item(const void *a, const void *b)
+static void submit_list(pvr_list_t list, const draw_item *it, int n)
 {
-    const draw_item *x = a, *y = b;
-    if (x->t != y->t)
-        return x->t < y->t ? -1 : 1;
-    return 0;
-}
-
-static void submit_list(pvr_list_t list, int n)
-{
-    int i;
+    int i, k;
     tex_entry *cur = (tex_entry *)1;
     uint32_t cur_col = 0xFFFFFFFFu;
     pvr_poly_cxt_t cxt;
     pvr_poly_hdr_t hdr;
-    pvr_vertex_t v;
+    static const int order[4] = { 0, 1, 3, 2 };
 
-    for (i = 0; i < n; i++) {
-        draw_item *it = &items[i];
+    for (i = 0; i < n; i++, it++) {
         const uint32_t *d = it->d;
-        int want_pt = it->t ? it->t->pt : 0;
-        static const int order[4] = { 0, 1, 3, 2 };
-        int k;
+        tex_entry *t = it->t;
         uint32_t argb = 0xFFFFFFFFu;
+        float uo = 0, vo = 0, iw = 0, ih = 0, z = it->z;
 
-        if ((list == PVR_LIST_PT_POLY) != (want_pt != 0))
-            continue;
-        if (!it->t) {
+        if (!t) {
             uint16_t c = vu.coloram[((d[1] & 0xFF00) | (d[0] & 0xFF)) & 0x7FFF];
             argb = 0xFF000000u | ((c & 0x7C00) << 9) | ((c & 0x03E0) << 6) | ((c & 0x1F) << 3);
         }
-        if (it->t != cur || (!it->t && argb != cur_col)) {
-            if (it->t) {
+        if (t != cur || (!t && argb != cur_col)) {
+            pvr_poly_hdr_t *hp;
+            if (t) {
                 pvr_poly_cxt_txr(&cxt, list, PVR_TXRFMT_ARGB1555 | PVR_TXRFMT_NONTWIDDLED,
-                                 it->t->w, it->t->h, it->t->ptr, PVR_FILTER_NONE);
+                                 t->w, t->h, t->ptr, PVR_FILTER_NONE);
                 cxt.txr.env = PVR_TXRENV_REPLACE;
             } else {
                 pvr_poly_cxt_col(&cxt, list);
@@ -390,25 +420,30 @@ static void submit_list(pvr_list_t list, int n)
             cxt.gen.culling = PVR_CULLING_NONE;
             cxt.depth.comparison = PVR_DEPTHCMP_GEQUAL;
             pvr_poly_compile(&hdr, &cxt);
-            pvr_prim(&hdr, sizeof(hdr));
-            cur = it->t;
+            hp = pvr_dr_target();
+            *hp = hdr;
+            pvr_dr_commit(hp);
+            cur = t;
             cur_col = argb;
+        }
+        if (t) {
+            iw = t->iw;
+            ih = t->ih;
+            uo = (0.5f - (float)t->u0) * iw;
+            vo = (0.5f - (float)t->v0) * ih;
         }
         for (k = 0; k < 4; k++) {
             int vi = order[k];
-            v.flags = k == 3 ? PVR_CMD_VERTEX_EOL : PVR_CMD_VERTEX;
-            v.x = ((float)(int16_t)d[2 + vi * 2] + 0.5f) * SX;
-            v.y = ((float)(int16_t)d[3 + vi * 2] + 0.5f) * SY;
-            v.z = it->z;
-            if (it->t) {
-                v.u = ((float)(d[10 + vi] & 0xFF) - it->t->u0 + 0.5f) / (float)it->t->w;
-                v.v = ((float)((d[10 + vi] >> 8) & 0xFF) - it->t->v0 + 0.5f) / (float)it->t->h;
-            } else {
-                v.u = v.v = 0.0f;
-            }
-            v.argb = argb;
-            v.oargb = 0;
-            pvr_prim(&v, sizeof(v));
+            pvr_vertex_t *v = pvr_dr_target();
+            v->flags = k == 3 ? PVR_CMD_VERTEX_EOL : PVR_CMD_VERTEX;
+            v->x = ((float)(int16_t)d[2 + vi * 2] + 0.5f) * SX;
+            v->y = ((float)(int16_t)d[3 + vi * 2] + 0.5f) * SY;
+            v->z = z;
+            v->u = (float)(d[10 + vi] & 0xFF) * iw + uo;
+            v->v = (float)((d[10 + vi] >> 8) & 0xFF) * ih + vo;
+            v->argb = argb;
+            v->oargb = 0;
+            pvr_dr_commit(v);
         }
         stat_polys++;
     }
@@ -463,28 +498,54 @@ static void draw_cpu_framebuffer(int page)
 
 static void render_page(int page, int shot)
 {
-    int n = page_npolys[page], i, m = 0;
+    int n = page_npolys[page], i, m = 0, n_op = 0, n_pt = 0;
 
     uint64_t ta = timer_us_gettime64(), tb, tc;
     frame_no++;
     conv_this_frame = 0;
     texels_this_frame = 0;
-    for (i = 0; i < n; i++) {
-        const uint32_t *d = page_polys[page][i].d;
-        tex_entry *t = NULL;
-        if ((d[0] & 0x300) == 0x100) {
-            t = get_texture(d);
-            if (!t) {
-                stat_skipped++;
-                continue;
+    {
+        /* textura de cada poligono y numero de orden por textura */
+        uint16_t nseq[2] = { 1, 1 };
+        int l, total[2] = { 0, 0 };
+        memset(seq_count, 0, sizeof(seq_count));
+        for (i = 0; i < n; i++) {
+            const uint32_t *d = page_polys[page][i].d;
+            tex_entry *t = NULL;
+            uint16_t sq = 0;
+            l = 0;
+            if ((d[0] & 0x300) == 0x100) {
+                t = get_texture(d);
+                if (!t) {
+                    stat_skipped++;
+                    continue;
+                }
+                l = t->pt;
+                if (t->seq_frame != frame_no) {
+                    t->seq_frame = frame_no;
+                    t->seq = nseq[l]++;
+                }
+                sq = t->seq;
             }
+            unsorted[m].d = d;
+            unsorted[m].t = t;
+            unsorted[m].z = 1.0f + (float)i * (1.0f / 4096.0f);
+            seq_count[l][sq + 1]++;
+            total[l]++;
+            m++;
         }
-        items[m].d = d;
-        items[m].t = t;
-        items[m].z = 1.0f + (float)i * (1.0f / 4096.0f);
-        m++;
+        /* ordenacion por cuentas (estable) */
+        for (l = 0; l < 2; l++)
+            for (i = 1; i <= nseq[l]; i++)
+                seq_count[l][i] += seq_count[l][i - 1];
+        for (i = 0; i < m; i++) {
+            tex_entry *t = unsorted[i].t;
+            l = t ? t->pt : 0;
+            items[l][seq_count[l][t ? t->seq : 0]++] = unsorted[i];
+        }
+        n_op = total[0];
+        n_pt = total[1];
     }
-    qsort(items, m, sizeof(items[0]), cmp_item);
     tb = timer_us_gettime64();
     t_tex += tb - ta;
 
@@ -509,11 +570,11 @@ static void render_page(int page, int shot)
             pool_free(cpu_fb_tex, 512 * 512 * 2);
             cpu_fb_tex = NULL;
         }
-        submit_list(PVR_LIST_OP_POLY, m);
+        submit_list(PVR_LIST_OP_POLY, items[0], n_op);
     }
     pvr_list_finish();
     pvr_list_begin(PVR_LIST_PT_POLY);
-    submit_list(PVR_LIST_PT_POLY, m);
+    submit_list(PVR_LIST_PT_POLY, items[1], n_pt);
     pvr_list_finish();
     pvr_scene_finish();
     t_sub += timer_us_gettime64() - tc;
@@ -554,6 +615,13 @@ void pvrr_init(void)
     printf("texturas: bloque de %u KB\n", (unsigned)(pool_bytes / 1024));
     vu_poly_hook = on_poly;
     vu_fifo_reset_hook = on_fifo_reset;
+}
+
+/* Reserva la textura de captura antes de que el bloque se fragmente */
+void pvrr_reserve_shot(void)
+{
+    if (!shot_tex)
+        shot_tex = pool_alloc(640 * 480 * 2);
 }
 
 void pvrr_frame(int shot)
