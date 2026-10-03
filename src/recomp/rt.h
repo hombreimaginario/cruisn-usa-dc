@@ -104,6 +104,8 @@ RT_INLINE uint32_t RD(uint32_t a)
     a &= 0xFFFFFFu;
     if (LIKELY(a < VU_FASTRAM_WORDS))
         return vu.fastram[a];
+    if (LIKELY(a - VU_C31_RAM_BASE < VU_C31_RAM_WORDS))
+        return vu.c31ram[a - VU_C31_RAM_BASE];
     return rt_rd_slow(a);
 }
 
@@ -112,6 +114,8 @@ RT_INLINE void WR(uint32_t a, uint32_t v)
     a &= 0xFFFFFFu;
     if (LIKELY(a < VU_FASTRAM_WORDS))
         vu.fastram[a] = v;
+    else if (LIKELY(a - VU_C31_RAM_BASE < VU_C31_RAM_WORDS))
+        vu.c31ram[a - VU_C31_RAM_BASE] = v;
     else
         rt_wr_slow(a, v);
 }

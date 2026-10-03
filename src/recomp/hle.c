@@ -422,6 +422,9 @@ uint32_t hle_poly_emit(void)
 
     SYNC_I(7);
     r7 = r[R7];
+    {
+        /* los registros de poligonos estan en ROM o FASTRAM: acceso directo */
+    }
     for (;;) {
         /* 0521-0529 (en la ruta de descarte 0521-0522 ya se hicieron) */
         if (!entered_skip) {
