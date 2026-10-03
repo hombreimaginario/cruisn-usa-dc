@@ -175,6 +175,17 @@ void rt_platform_event(void)
         return;
     frame++;
     frame_end += INSNS_PER_FRAME;
+    {
+        static int last_page = -1, flips, polys_acc;
+        int pg = vu.page_control & 1;
+        if (pg != last_page) { flips++; last_page = pg; }
+        polys_acc += vu.polys_frame;
+        if (getenv("CUSA_FLIPS") && frame % 57 == 0) {
+            printf("frame %d flips=%d polis=%d\n", frame, flips, polys_acc);
+            flips = 0;
+            polys_acc = 0;
+        }
+    }
     if (every > 0 && frame % every == 0) {
         printf("frame %d: sp=%06X polis=%u pagina=%u  (%.1f s)\n", frame,
                (unsigned)C.r[C3X_SP], (unsigned)vu.polys_frame,

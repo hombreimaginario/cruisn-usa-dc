@@ -42,6 +42,7 @@ HLE_HOOKS = {
     0x00A334: ("hle_lzw_segment", None),   # COMP.ASM DECOMPRESS_TOPLP3
     0x000141: ("hle_vtx_dirq", 0x000163),  # DIRQ.ASM bucle de vertices
     0x00211D: ("hle_vtx_model", 0x002134), # bucle de vertices de modelos
+    0x000521: ("hle_poly_emit", None),     # DIRQ.ASM envio de poligonos
 }
 
 

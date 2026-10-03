@@ -358,3 +358,129 @@ void hle_vtx_model(void)
     FL_FLT(R2);
     C.cyc += iters * 23 - 23;
 }
+
+/* ------------------------------------------------------------------------ */
+/* Envio de poligonos a la FIFO (DIRQ.ASM, bucle RPTB 0x0521-0x054E)        */
+/* ------------------------------------------------------------------------ */
+
+static inline void fifo_put(uint32_t v)
+{
+    if (vu.fifo_count < 16)
+        vu.fifo[vu.fifo_count++] = v;
+}
+
+static inline void seti(int n, uint32_t v)
+{
+    SYNC_I(n);
+    C.r[n] = v;
+    C.rk[n] = 2;
+}
+
+/*
+ * Para cada poligono del modelo: lee los 4 indices de vertice, descarta
+ * los que miran hacia atras y envia el paquete de 15 palabras con las
+ * coordenadas de pantalla (FIX de los flotantes ya proyectados), las
+ * coordenadas de textura y la direccion de textura. Se entra en 0x0521
+ * (primera instruccion del RPTB) y se sale por uno de los dos RETSU.
+ */
+uint32_t hle_poly_emit(void)
+{
+    uint32_t *r = C.r;
+    uint32_t ar1 = r[AR1], ir0 = r[IR0], ir1 = r[IR1], r7;
+    uint32_t r3 = 0, ar2 = r[AR2], ar3 = r[AR3], ar4 = 0, ar5 = r[AR5];
+    float f0 = 0, f1 = 0, f2 = 0;
+    uint32_t i0 = 0, i1 = 0, i2 = 0;
+    uint32_t rc = r[RC_];
+    uint64_t work = 0;
+    int entered_skip = 0;
+
+    SYNC_I(7);
+    r7 = r[R7];
+    for (;;) {
+        /* 0521-0529 (en la ruta de descarte 0521-0522 ya se hicieron) */
+        if (!entered_skip) {
+            r3 = RD(ar1 + 1);
+            ar4 = r3 & r7;
+        }
+        entered_skip = 0;
+        ar4 *= 3;
+        r3 >>= 8;
+        ar5 = (r3 & r7) * 3;
+        r3 >>= 8;
+        ar2 = (r3 & r7) * 3;
+        /* 052A-052C: espera de FIFO (nunca llena en la emulacion) */
+        f1 = MF(ar5 + ir0) - MF(ar4 + ir0);                 /* 052D */
+        f2 = MF(ar5 + ir1) - MF(ar4 + ir1);                 /* 052E */
+        f0 = MF(ar5 + ir0) - MF(ar2 + ir0);                 /* 052F */
+        {
+            float a = MF(ar5 + ir1) - MF(ar2 + ir1);        /* 0530 MPYF3 || SUBF3 */
+            f0 = f2 * f0;
+            f2 = a;
+        }
+        f2 = f2 * f1;                                       /* 0531 */
+        f2 = f2 - f0;                                       /* 0532 */
+        r3 >>= 8;                                           /* 0534 (ranura) */
+        i1 = 3;                                             /* 0535 */
+        work += 20;
+        if (f2 > 0.0f) {
+            /* 0533 BGTD 0550: cara trasera, se descarta */
+            rc--;                                           /* 0550 */
+            i0 = rc;                                        /* 0551 */
+            ar1 += 6;                                       /* 0553 */
+            r3 = RD(ar1);
+            ar1 -= 1;                                       /* 0554 */
+            ar4 = r3 & r7;                                  /* 0555 */
+            work += 6;
+            if ((int32_t)rc >= 0) {                         /* 0552 BGED 0523 */
+                entered_skip = 1;
+                continue;
+            }
+            /* 0556 RETSU con RM aun activo (como el original) */
+            r[RC_] = rc;
+            seti(0, i0); setf(1, 0); seti(1, i1); setf(2, f2);
+            seti(3, r3);
+            r[AR1] = ar1; r[AR2] = ar2; r[AR4] = ar4; r[AR5] = ar5;
+            C.r[C3X_ST] = (C.r[C3X_ST] & ~0x1Fu) | rt_nz(i0);
+            C.cyc += (uint32_t)work;
+            return POP() & 0xFFFFFFu;
+        }
+        /* 0537-054E: paquete de 15 palabras */
+        {
+            uint32_t w0 = RD(ar1);
+            ar1 += 2;
+            ar3 = r3 * 3;
+            fifo_put(w0);
+            fifo_put(w0 >> 16);
+            fifo_put(rt_fix(MF(ar4 + ir0), 0));
+            fifo_put(rt_fix(MF(ar4 + ir1), 0));
+            fifo_put(rt_fix(MF(ar5 + ir0), 0));
+            fifo_put(rt_fix(MF(ar5 + ir1), 0));
+            fifo_put(rt_fix(MF(ar2 + ir0), 0));
+            fifo_put(rt_fix(MF(ar2 + ir1), 0));
+            fifo_put(rt_fix(MF(ar3 + ir0), 0));
+            fifo_put(rt_fix(MF(ar3 + ir1), 0));
+            i0 = RD(ar1); i1 = RD(ar1 + 1); i2 = RD(ar1 + 2);
+            ar1 += 3;
+            fifo_put(i0);
+            fifo_put(i0 >> 16);
+            fifo_put(i1);
+            fifo_put(i1 >> 16);
+            fifo_put(i2);
+            i0 >>= 16;
+            i1 >>= 16;
+            vu_dma_process();                               /* 054E LDI @FIFO_INC */
+            i0 = 0;
+            work += 24;
+        }
+        if ((int32_t)--rc < 0)                              /* fin del RPTB */
+            break;
+    }
+    /* 054F RETSU */
+    r[RC_] = 0xFFFFFFFFu;
+    C.r[C3X_ST] &= ~C3X_ST_RM;
+    seti(0, 0); seti(1, i1); seti(2, i2); seti(3, r3);
+    r[AR1] = ar1; r[AR2] = ar2; r[AR3] = ar3; r[AR4] = ar4; r[AR5] = ar5;
+    C.r[C3X_ST] = (C.r[C3X_ST] & ~0x1Fu) | F_Z;
+    C.cyc += (uint32_t)work;
+    return POP() & 0xFFFFFFu;
+}
