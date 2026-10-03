@@ -862,6 +862,54 @@ uint32_t hle_poly_emit_quad(void)
     return POP() & 0xFFFFFFu;
 }
 
+/*
+ * Bucle 0x207A-0x208A: recorre una lista de objetos (*+AR2(32) = siguiente)
+ * y busca el primero que este a menos de R0 + radio (*+AR2(29), entero) en
+ * el plano XZ del punto (R3, R4). Si lo encuentra sale por 0x208B; si se
+ * acaba la lista, RETSU (con las ranuras del BNED ejecutadas con AR2 = 0).
+ */
+uint32_t hle_obj_near(void)
+{
+    uint32_t *r = C.r;
+    float R0 = getf(0), R3 = getf(3), R4 = getf(4), R1, R2;
+    uint32_t ar2 = r[AR2], work = 0;
+
+    for (;;) {
+        float d = R1 = 0;
+        R2 = R3 - MF(ar2 + 1);                              /* 207A */
+        R1 = R4 - MF(ar2 + 3);                              /* 207B */
+        R1 = R1 * R1;
+        R2 = R2 * R2;
+        R2 = R2 + R1;                                       /* 207E */
+        R1 = (float)(int32_t)RD(ar2 + 29);                  /* 207F */
+        R1 = R1 + R0;
+        R1 = R1 * R1;                                       /* 2081 */
+        (void)d;
+        work += 10;
+        if (R2 < R1) {                                      /* 2082-2083 BLT 208B */
+            setf(1, R1); setf(2, R2);
+            r[AR2] = ar2;
+            d = R2 - R1;
+            C.r[C3X_ST] = (C.r[C3X_ST] & ~0x1Fu) | (d < 0.0f ? F_N : 0) | (d == 0.0f ? F_Z : 0);
+            C.cyc += work;
+            return 0x00208Bu;
+        }
+        ar2 = RD(ar2 + 32) & 0xFFFFFFu;                     /* 2084 */
+        work += 6;
+        if (ar2 == 0) {
+            /* 2087-2089 en las ranuras con AR2 = 0, despues RETSU */
+            R2 = R3 - MF(1);
+            R1 = R4 - MF(3);
+            R1 = R1 * R1;
+            setf(1, R1); setf(2, R2);
+            r[AR2] = 0;
+            FL_FLT(R1);
+            C.cyc += work;
+            return POP() & 0xFFFFFFu;
+        }
+    }
+}
+
 /* ------------------------------------------------------------------------ */
 /* Prueba de visibilidad de modelo (bucle RPTB 0x213E-0x216A)                */
 /* ------------------------------------------------------------------------ */

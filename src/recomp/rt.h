@@ -294,6 +294,7 @@ uint32_t hle_poly_emit_pal(void);
 uint32_t hle_poly_emit_quad(void);
 uint32_t hle_model_visible(void);
 uint32_t hle_zsort(void);
+uint32_t hle_obj_near(void);
 float    rt_lde(float dst, float src);
 float    rt_ldm(float dst, float src);
 

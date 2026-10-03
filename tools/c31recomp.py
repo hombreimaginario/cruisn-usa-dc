@@ -66,6 +66,7 @@ HLE_HOOKS = {
     0x0001A1: ("hle_vtx_race", 0x0001BB),  # DIRQ.ASM vertices del decorado en carrera
     0x00213E: ("hle_model_visible", (0x00216B, 0x002175)),  # visibilidad de modelo
     0x007189: ("hle_zsort", (0x0071A8, 0x0071A9)),          # OBJ.ASM ZSORTWL
+    0x00207A: ("hle_obj_near", (0x00208B,)),                # objeto cercano en una lista
 }
 
 
