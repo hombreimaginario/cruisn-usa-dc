@@ -88,9 +88,8 @@ static void draw_triangle(uint16_t *page, const vtx *a, const vtx *b, const vtx 
 
 void (*vu_poly_hook)(const uint32_t *pkt, int page);
 
-void vu_dma_process(void)
+void vu_poly_packet(const uint32_t *d)
 {
-    uint32_t *d = vu.fifo;
     vtx q[4];
     int i;
     uint16_t *page;
@@ -98,11 +97,6 @@ void vu_dma_process(void)
     const uint8_t *tex;
     uint32_t texoff;
 
-    if (vu.fifo_count < 15) {
-        vu.fifo_count = 0;
-        return;
-    }
-    vu.fifo_count = 0;
     vu.polys_frame++;
     if (vu_poly_hook) {
         vu_poly_hook(d, (vu.page_control & 4) ? 1 : 0);
@@ -128,6 +122,16 @@ void vu_dma_process(void)
 #else
     (void)page; (void)pixdata; (void)tex;
 #endif
+}
+
+void vu_dma_process(void)
+{
+    if (vu.fifo_count < 15) {
+        vu.fifo_count = 0;
+        return;
+    }
+    vu.fifo_count = 0;
+    vu_poly_packet(vu.fifo);
 }
 
 void vu_video_to_rgb565(uint16_t *dst, int pitch, int page)

@@ -105,6 +105,8 @@ extern void (*vu_poly_hook)(const uint32_t *pkt, int page);
 extern void (*vu_fifo_reset_hook)(void);   /* escritura en FIFO_CONTROL */
 extern void (*vu_sound_hook)(uint32_t value); /* escrituras en el puerto de sonido */
 void vu_dma_process(void);
+/* Paquete de 15 palabras completo (sin pasar por la FIFO emulada) */
+void vu_poly_packet(const uint32_t *pkt);
 void vu_video_to_rgb565(uint16_t *dst, int pitch, int page);
 
 #endif /* VUNIT_MEM_H */

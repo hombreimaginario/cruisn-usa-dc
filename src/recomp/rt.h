@@ -287,6 +287,8 @@ void     hle_vtx_dirq(void);
 void     hle_vtx_model(void);
 void     hle_vtx_world(void);
 uint32_t hle_poly_emit(void);
+uint32_t hle_poly_emit_pal(void);
+uint32_t hle_poly_emit_quad(void);
 uint32_t hle_model_visible(void);
 uint32_t hle_zsort(void);
 float    rt_lde(float dst, float src);

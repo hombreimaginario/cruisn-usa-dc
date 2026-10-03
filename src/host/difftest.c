@@ -293,6 +293,7 @@ static void test_function(uint32_t entry)
 
 int main(int argc, char **argv)
 {
+    int from_frame;
     const char *dir;
     uint32_t *program, *gfx, *cm;
     size_t n = 0;
@@ -307,6 +308,7 @@ int main(int argc, char **argv)
     dir = argv[1];
     frames = argc > 2 ? atoi(argv[2]) : 600;
     per_func = argc > 3 ? atoi(argv[3]) : 2;
+    /* CUSA_DT_FROM: empezar a probar en ese frame (escenas posteriores) */
 
     program = load_file(dir, "program.bin", NULL);
     gfx = load_file(dir, "gfx.bin", NULL);
@@ -332,12 +334,14 @@ int main(int argc, char **argv)
         memcpy(vu.cmos, cm, n);
     c3x_reset(&cpu);
 
+    from_frame = getenv("CUSA_DT_FROM") ? atoi(getenv("CUSA_DT_FROM")) : 0;
     for (frame = 0; frame < frames; frame++) {
         uint64_t end = (uint64_t)(frame + 1) * INSNS_PER_FRAME;
         uint64_t next_tick = cpu.cycles + 500;
         while (cpu.cycles < end) {
             uint32_t pc = cpu.pc;
-            if (pc < VU_FASTRAM_WORDS && is_start[pc] && tested[pc] < per_func && !cpu.delay_count) {
+            if (frame >= from_frame && pc < VU_FASTRAM_WORDS && is_start[pc] && tested[pc] < per_func &&
+                !cpu.delay_count) {
                 tested[pc]++;
                 cpu_gie_before = cpu.r[C3X_ST];
                 test_function(pc);

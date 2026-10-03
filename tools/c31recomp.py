@@ -43,6 +43,8 @@ HLE_HOOKS = {
     0x000141: ("hle_vtx_dirq", 0x000163),  # DIRQ.ASM bucle de vertices
     0x00211D: ("hle_vtx_model", 0x002134), # bucle de vertices de modelos
     0x000521: ("hle_poly_emit", None),     # DIRQ.ASM envio de poligonos
+    0x000461: ("hle_poly_emit_pal", None), # idem con paleta por poligono
+    0x000561: ("hle_poly_emit_quad", None),  # idem con cuadrilateros
     0x000221: ("hle_vtx_world", 0x000247), # DIRQ.ASM vertices con origen
     0x00213E: ("hle_model_visible", (0x00216B, 0x002175)),  # visibilidad de modelo
     0x007189: ("hle_zsort", (0x0071A8, 0x0071A9)),          # OBJ.ASM ZSORTWL

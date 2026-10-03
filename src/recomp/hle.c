@@ -428,12 +428,6 @@ void hle_vtx_model(void)
 /* Envio de poligonos a la FIFO (DIRQ.ASM, bucle RPTB 0x0521-0x054E)        */
 /* ------------------------------------------------------------------------ */
 
-static inline void fifo_put(uint32_t v)
-{
-    if (vu.fifo_count < 16)
-        vu.fifo[vu.fifo_count++] = v;
-}
-
 static inline void seti(int n, uint32_t v)
 {
     SYNC_I(n);
@@ -453,7 +447,7 @@ uint32_t hle_poly_emit(void)
     uint32_t *r = C.r;
     uint32_t ar1 = r[AR1], ir0 = r[IR0], ir1 = r[IR1], r7, r6;
     uint32_t r3 = 0, ar2 = r[AR2], ar3 = r[AR3], ar4 = 0, ar5 = r[AR5];
-    float f0 = 0, f1 = 0, f2 = 0;
+    float f0 = 0, f1 = 0, f2 = 0, x2, y2, x4, y4, x5, y5;
     uint32_t i0 = 0, i1 = 0, i2 = 0;
     uint32_t rc = r[RC_];
     uint64_t work = 0;
@@ -479,11 +473,14 @@ uint32_t hle_poly_emit(void)
         r3 >>= 8;
         ar2 = (r3 & r7) * 3;
         /* 052A-052C: espera de FIFO (nunca llena en la emulacion) */
-        f1 = MF(ar5 + ir0) - MF(ar4 + ir0);                 /* 052D */
-        f2 = MF(ar5 + ir1) - MF(ar4 + ir1);                 /* 052E */
-        f0 = MF(ar5 + ir0) - MF(ar2 + ir0);                 /* 052F */
+        x4 = MF(ar4 + ir0); y4 = MF(ar4 + ir1);
+        x5 = MF(ar5 + ir0); y5 = MF(ar5 + ir1);
+        x2 = MF(ar2 + ir0); y2 = MF(ar2 + ir1);
+        f1 = x5 - x4;                                       /* 052D */
+        f2 = y5 - y4;                                       /* 052E */
+        f0 = x5 - x2;                                       /* 052F */
         {
-            float a = MF(ar5 + ir1) - MF(ar2 + ir1);        /* 0530 MPYF3 || SUBF3 */
+            float a = y5 - y2;                              /* 0530 MPYF3 || SUBF3 */
             f0 = f2 * f0;
             f2 = a;
         }
@@ -509,36 +506,38 @@ uint32_t hle_poly_emit(void)
             r[RC_] = rc;
             seti(0, i0); setf(1, 0); seti(1, i1); setf(2, f2);
             seti(3, r3);
-            r[AR1] = ar1; r[AR2] = ar2; r[AR4] = ar4; r[AR5] = ar5;
+            r[AR1] = ar1; r[AR2] = ar2; r[AR3] = ar3; r[AR4] = ar4; r[AR5] = ar5;
             C.r[C3X_ST] = (C.r[C3X_ST] & ~0x1Fu) | rt_nz(i0);
             C.cyc += (uint32_t)work;
             return POP() & 0xFFFFFFu;
         }
-        /* 0537-054E: paquete de 15 palabras */
+        /* 0537-054E: paquete de 15 palabras, directo al motor de poligonos
+         * (equivale a las 15 escrituras en la FIFO y FIFO_INC) */
         {
-            uint32_t w0 = RD(ar1);
-            ar1 += 2;
+            uint32_t pkt[15];
             ar3 = r3 * 3;
-            fifo_put(w0);
-            fifo_put(r6);                                   /* 053C ... || STI R6 */
-            fifo_put(fixf(MF(ar4 + ir0)));
-            fifo_put(fixf(MF(ar4 + ir1)));
-            fifo_put(fixf(MF(ar5 + ir0)));
-            fifo_put(fixf(MF(ar5 + ir1)));
-            fifo_put(fixf(MF(ar2 + ir0)));
-            fifo_put(fixf(MF(ar2 + ir1)));
-            fifo_put(fixf(MF(ar3 + ir0)));
-            fifo_put(fixf(MF(ar3 + ir1)));
+            pkt[0] = RD(ar1);
+            ar1 += 2;
+            pkt[1] = r6;                                    /* 053C ... || STI R6 */
+            pkt[2] = fixf(x4);
+            pkt[3] = fixf(y4);
+            pkt[4] = fixf(x5);
+            pkt[5] = fixf(y5);
+            pkt[6] = fixf(x2);
+            pkt[7] = fixf(y2);
+            pkt[8] = fixf(MF(ar3 + ir0));
+            pkt[9] = fixf(MF(ar3 + ir1));
             i0 = RD(ar1); i1 = RD(ar1 + 1); i2 = RD(ar1 + 2);
             ar1 += 3;
-            fifo_put(i0);
-            fifo_put(i0 >> 16);
-            fifo_put(i1);
-            fifo_put(i1 >> 16);
-            fifo_put(i2);
+            pkt[10] = i0;
+            pkt[11] = i0 >> 16;
+            pkt[12] = i1;
+            pkt[13] = i1 >> 16;
+            pkt[14] = i2;
             i0 >>= 16;
             i1 >>= 16;
-            vu_dma_process();                               /* 054E LDI @FIFO_INC */
+            vu.fifo_count = 0;
+            vu_poly_packet(pkt);                            /* 054E LDI @FIFO_INC */
             i0 = 0;
             work += 24;
         }
@@ -552,6 +551,243 @@ uint32_t hle_poly_emit(void)
     r[AR1] = ar1; r[AR2] = ar2; r[AR3] = ar3; r[AR4] = ar4; r[AR5] = ar5;
     C.r[C3X_ST] = (C.r[C3X_ST] & ~0x1Fu) | F_Z;
     C.cyc += (uint32_t)work;
+    return POP() & 0xFFFFFFu;
+}
+
+/*
+ * Variante de 0x0461-0x048F: igual que hle_poly_emit pero la palabra 1 sale
+ * de una tabla de paletas: AR6 = BK + (w0 LSH R6), palabra = (*AR6 LSH R6)
+ * << 8. El descarte de caras traseras sigue en 0x0491.
+ */
+uint32_t hle_poly_emit_pal(void)
+{
+    uint32_t *r = C.r;
+    uint32_t ar1 = r[AR1], ir0 = r[IR0], ir1 = r[IR1], r7, r6, bk = r[BK];
+    uint32_t r3 = 0, ar2 = r[AR2], ar3 = r[AR3], ar4 = 0, ar5 = r[AR5], ar6 = r[AR6];
+    float f0 = 0, f1 = 0, f2 = 0, x2, y2, x4, y4, x5, y5;
+    uint32_t i1 = 0, i2 = 0;
+    uint32_t rc = r[RC_];
+    uint32_t work = 0;
+    int entered_skip = 0;
+
+    SYNC_I(7);
+    r7 = r[R7];
+    SYNC_I(6);
+    r6 = r[R6];
+    for (;;) {
+        if (!entered_skip) {                                /* 0461-0462 */
+            r3 = RD(ar1 + 1);
+            ar4 = r3 & r7;
+        }
+        entered_skip = 0;
+        ar4 *= 3;                                           /* 0463 */
+        r3 >>= 8;
+        ar5 = (r3 & r7) * 3;
+        r3 >>= 8;
+        ar2 = (r3 & r7) * 3;                                /* 0469 */
+        x4 = MF(ar4 + ir0); y4 = MF(ar4 + ir1);
+        x5 = MF(ar5 + ir0); y5 = MF(ar5 + ir1);
+        x2 = MF(ar2 + ir0); y2 = MF(ar2 + ir1);
+        f1 = x5 - x4;                                       /* 046D */
+        f2 = y5 - y4;                                       /* 046E */
+        f0 = x5 - x2;                                       /* 046F */
+        {
+            float a = y5 - y2;                              /* 0470 MPYF3 || SUBF3 */
+            f0 = f2 * f0;
+            f2 = a;
+        }
+        f2 = f2 * f1;                                       /* 0471 */
+        f2 = f2 - f0;                                       /* 0472 */
+        r3 >>= 8;                                           /* 0474 (ranura) */
+        i1 = 3;                                             /* 0475 */
+        work += 22;
+        if (f2 > 0.0f) {
+            /* 0473 BGTD 0491: cara trasera */
+            rc--;                                           /* 0491 */
+            ar1 += 6;                                       /* 0494 */
+            r3 = RD(ar1);
+            ar1 -= 1;                                       /* 0495 */
+            ar4 = r3 & r7;                                  /* 0496 */
+            work += 6;
+            if ((int32_t)rc >= 0) {                         /* 0493 BGED 0463 */
+                entered_skip = 1;
+                continue;
+            }
+            /* 0497 RETSU con RM aun activo */
+            r[RC_] = rc;
+            seti(0, rc); setf(1, f1); seti(1, i1); setf(2, f2);
+            seti(3, r3);
+            r[AR1] = ar1; r[AR2] = ar2; r[AR3] = ar3; r[AR4] = ar4; r[AR5] = ar5; r[AR6] = ar6;
+            C.r[C3X_ST] = (C.r[C3X_ST] & ~0x1Fu) | rt_nz(rc);
+            C.cyc += work;
+            return POP() & 0xFFFFFFu;
+        }
+        {
+            uint32_t pkt[15], w0, i0;
+            w0 = RD(ar1);                                   /* 0477 */
+            ar1 += 2;
+            ar3 = r3 * 3;                                   /* 0479 */
+            ar6 = rt_shift(w0, r6, 0, 0) + bk;              /* 0478, 047A */
+            pkt[0] = w0;
+            pkt[1] = rt_shift(RD(ar6), r6, 0, 0) << 8;      /* 047B-047C */
+            pkt[2] = fixf(x4);
+            pkt[3] = fixf(y4);
+            pkt[4] = fixf(x5);
+            pkt[5] = fixf(y5);
+            pkt[6] = fixf(x2);
+            pkt[7] = fixf(y2);
+            pkt[8] = fixf(MF(ar3 + ir0));
+            pkt[9] = fixf(MF(ar3 + ir1));
+            i0 = RD(ar1); i1 = RD(ar1 + 1); i2 = RD(ar1 + 2);
+            ar1 += 3;
+            pkt[10] = i0;
+            pkt[11] = i0 >> 16;
+            pkt[12] = i1;
+            pkt[13] = i1 >> 16;
+            pkt[14] = i2;
+            i1 >>= 16;
+            vu.fifo_count = 0;
+            vu_poly_packet(pkt);                            /* 048F LDI @FIFO_INC */
+            work += 25;
+        }
+        if ((int32_t)--rc < 0)                              /* fin del RPTB */
+            break;
+    }
+    /* 0490 RETSU */
+    r[RC_] = 0xFFFFFFFFu;
+    C.r[C3X_ST] &= ~C3X_ST_RM;
+    seti(0, 0); seti(1, i1); seti(2, i2); seti(3, r3);
+    r[AR1] = ar1; r[AR2] = ar2; r[AR3] = ar3; r[AR4] = ar4; r[AR5] = ar5; r[AR6] = ar6;
+    C.r[C3X_ST] = (C.r[C3X_ST] & ~0x1Fu) | F_Z;
+    C.cyc += work;
+    return POP() & 0xFFFFFFu;
+}
+
+/*
+ * Variante de 0x0561-0x0595 para cuadrilateros: 4 indices de vertice y una
+ * prueba de caras traseras doble. La segunda prueba hace un OR entero de
+ * dos flotantes (0x057C) y mira el signo y si el primero es cero (LDF):
+ * se descarta si ninguno de los dos productos es negativo y el primero no
+ * es cero. Si AR3 == AR2 (triangulo) solo cuenta la primera prueba.
+ */
+uint32_t hle_poly_emit_quad(void)
+{
+    uint32_t *r = C.r;
+    uint32_t ar1 = r[AR1], ir0 = r[IR0], ir1 = r[IR1], r7, r6;
+    uint32_t r3 = 0, ar2 = r[AR2], ar3 = r[AR3], ar4 = 0, ar5 = r[AR5];
+    float f0 = 0, f1 = 0, f2 = 0, f3 = 0, x2, y2, x3, y3, x4, y4, x5, y5;
+    uint32_t i1 = 0, i2 = 0;
+    uint32_t rc = r[RC_];
+    uint32_t work = 0;
+    int entered_skip = 0, r3_float = 0;
+
+    SYNC_I(7);
+    r7 = r[R7];
+    SYNC_I(6);
+    r6 = r[R6];
+    for (;;) {
+        int back;
+        if (!entered_skip) {                                /* 0561-0562 */
+            r3 = RD(ar1 + 1);
+            ar4 = r3 & r7;
+        }
+        entered_skip = 0;
+        ar4 *= 3;                                           /* 0563 */
+        r3 >>= 8;
+        ar5 = (r3 & r7) * 3;
+        r3 >>= 8;
+        ar2 = (r3 & r7) * 3;
+        r3 >>= 8;
+        ar3 = (r3 & r7) * 3;                                /* 056C */
+        x4 = MF(ar4 + ir0); y4 = MF(ar4 + ir1);
+        x5 = MF(ar5 + ir0); y5 = MF(ar5 + ir1);
+        x2 = MF(ar2 + ir0); y2 = MF(ar2 + ir1);
+        y3 = MF(ar3 + ir1);
+        f1 = x5 - x4;                                       /* 0570 */
+        f3 = y5 - y4;                                       /* 0571 */
+        f0 = x2 - x5;                                       /* 0572 */
+        f0 = f3 * f0;                                       /* 0573 MPYF3 || SUBF3 */
+        f2 = y2 - y5;
+        f1 = f2 * f1;                                       /* 0574 */
+        f0 = f0 - f1;                                       /* 0575 */
+        back = f0 > 0.0f;                                   /* 0576 BGTD 0597 */
+        {
+            float a = y3 - y2;                              /* 0577 */
+            float b = y4 - y3;                              /* 0578 MPYF3 || SUBF3 */
+            f0 = f3 * a;
+            f3 = b;
+            r3_float = 1;
+        }
+        work += 26;
+        if (!back && ar3 != ar2) {                          /* 0579-057A CMPI, BEQD 057F */
+            f2 = f2 * f3;                                   /* 057B */
+            /* 057C-057E: OR de las dos representaciones, LDF, BGT */
+            back = !(f0 < 0.0f || f2 < 0.0f) && f0 != 0.0f;
+            work += 1;
+        } else if (!back) {
+            f2 = f2 * f3;                                   /* ranura 057B */
+        }
+        if (back) {
+            rc--;                                           /* 0597 */
+            ar1 += 6;                                       /* 059A */
+            r3 = RD(ar1);
+            r3_float = 0;
+            ar1 -= 1;                                       /* 059B */
+            ar4 = r3 & r7;                                  /* 059C */
+            work += 6;
+            if ((int32_t)rc >= 0) {                         /* 0599 BGED 0563 */
+                entered_skip = 1;
+                continue;
+            }
+            /* 059D RETSU con RM aun activo */
+            r[RC_] = rc;
+            seti(0, rc); setf(1, f1); setf(2, f2);
+            seti(3, r3);
+            r[AR1] = ar1; r[AR2] = ar2; r[AR3] = ar3; r[AR4] = ar4; r[AR5] = ar5;
+            C.r[C3X_ST] = (C.r[C3X_ST] & ~0x1Fu) | rt_nz(rc);
+            C.cyc += work;
+            return POP() & 0xFFFFFFu;
+        }
+        {
+            uint32_t pkt[15], i0;
+            x3 = MF(ar3 + ir0);
+            pkt[0] = RD(ar1);                               /* 057F */
+            ar1 += 2;
+            pkt[1] = r6;                                    /* 0583 ... || STI R6 */
+            pkt[2] = fixf(x4);
+            pkt[3] = fixf(y4);
+            pkt[4] = fixf(x5);
+            pkt[5] = fixf(y5);
+            pkt[6] = fixf(x2);
+            pkt[7] = fixf(y2);
+            pkt[8] = fixf(x3);
+            pkt[9] = fixf(y3);
+            i0 = RD(ar1); i1 = RD(ar1 + 1); i2 = RD(ar1 + 2);
+            ar1 += 3;
+            pkt[10] = i0;
+            pkt[11] = i0 >> 16;
+            pkt[12] = i1;
+            pkt[13] = i1 >> 16;
+            pkt[14] = i2;
+            i1 >>= 16;
+            vu.fifo_count = 0;
+            vu_poly_packet(pkt);                            /* 0595 LDI @FIFO_INC */
+            work += 23;
+        }
+        if ((int32_t)--rc < 0)                              /* fin del RPTB */
+            break;
+    }
+    /* 0596 RETSU */
+    r[RC_] = 0xFFFFFFFFu;
+    C.r[C3X_ST] &= ~C3X_ST_RM;
+    seti(0, 0); seti(1, i1); seti(2, i2);
+    if (r3_float)
+        setf(3, f3);
+    else
+        seti(3, r3);
+    r[AR1] = ar1; r[AR2] = ar2; r[AR3] = ar3; r[AR4] = ar4; r[AR5] = ar5;
+    C.r[C3X_ST] = (C.r[C3X_ST] & ~0x1Fu) | F_Z;
+    C.cyc += work;
     return POP() & 0xFFFFFFu;
 }
 
@@ -571,6 +807,7 @@ uint32_t hle_model_visible(void)
     uint32_t ar1 = 0, ar3 = 0, ar5 = 0, ar6 = 0, ar4 = r[AR4];
     uint32_t ir0 = r[IR0], ir1 = r[IR1], r4i, r5i, ri1;
     float R0 = getf(0), R1 = 0, R2 = getf(2), R3 = getf(3);
+    float x1, y1, x3, y3, x5, y5, x6, y6;
     uint32_t rc = r[RC_];
     uint32_t work = 0;
     int r1_is_float = 0;
@@ -579,8 +816,8 @@ uint32_t hle_model_visible(void)
     SYNC_I(5); r5i = r[5];
     SYNC_I(1); ri1 = r[1];
 
-#define X(a) MF((a) + ir0)
-#define Y(a) MF((a) + ir1)
+#define X(a) x##a
+#define Y(a) y##a
     for (;;) {
         int exit_found = 0;
         ar1 = (ri1 & r4i) * 3;                         /* 213E-213F */
@@ -589,56 +826,61 @@ uint32_t hle_model_visible(void)
         ri1 >>= 8;                                     /* 2143 */
         ar5 = (ri1 & r4i) * 3;                         /* 2144-2145 */
         ar6 = rt_shift(ri1, r5i, 0, 0) * 3;            /* 2146-2147 */
+        /* coordenadas de los 4 vertices, convertidas una sola vez */
+        x1 = MF(ar1 + ir0); y1 = MF(ar1 + ir1);
+        x3 = MF(ar3 + ir0); y3 = MF(ar3 + ir1);
+        x5 = MF(ar5 + ir0); y5 = MF(ar5 + ir1);
+        x6 = MF(ar6 + ir0); y6 = MF(ar6 + ir1);
         /* 2149 BEQD 2152, ranuras 214A-214C */
-        R0 = X(ar6) - X(ar5);
-        R1 = Y(ar5) - Y(ar6);
-        R2 = R0 * Y(ar5);
+        R0 = X(6) - X(5);
+        R1 = Y(5) - Y(6);
+        R2 = R0 * Y(5);
         r1_is_float = 1;
         work += 12;
         do {
             if (ar6 != ar5) {
-                R3 = R1 * X(ar5);                      /* 214D */
+                R3 = R1 * X(5);                      /* 214D */
                 R2 = R2 + R3;
                 R1 = fabsf(R1);
                 {
                     int gt = R2 > R1;                  /* 2150-2151 BGTD 216A */
-                    R0 = X(ar1) - X(ar6);              /* ranuras 2152-2154 */
-                    R1 = Y(ar6) - Y(ar1);
-                    R2 = R0 * Y(ar6);
+                    R0 = X(1) - X(6);              /* ranuras 2152-2154 */
+                    R1 = Y(6) - Y(1);
+                    R2 = R0 * Y(6);
                     work += 8;
                     if (gt)
                         break;
                 }
             } else {
-                R0 = X(ar1) - X(ar6);                  /* 2152-2154 */
-                R1 = Y(ar6) - Y(ar1);
-                R2 = R0 * Y(ar6);
+                R0 = X(1) - X(6);                  /* 2152-2154 */
+                R1 = Y(6) - Y(1);
+                R2 = R0 * Y(6);
             }
-            R3 = R1 * X(ar6);                          /* 2155 */
+            R3 = R1 * X(6);                          /* 2155 */
             R2 = R2 + R3;
             R1 = fabsf(R1);
             {
                 int gt = R2 > R1;                      /* 2159 BGTD 216A */
-                R0 = X(ar3) - X(ar1);                  /* 215A-215C */
-                R1 = Y(ar1) - Y(ar3);
-                R2 = R0 * Y(ar1);
+                R0 = X(3) - X(1);                  /* 215A-215C */
+                R1 = Y(1) - Y(3);
+                R2 = R0 * Y(1);
                 work += 8;
                 if (gt)
                     break;
             }
-            R3 = R1 * X(ar1);                          /* 215D */
+            R3 = R1 * X(1);                          /* 215D */
             R2 = R2 + R3;
             R1 = fabsf(R1);
             {
                 int gt = R2 > R1;                      /* 2161 BGTD 216A */
-                R0 = X(ar5) - X(ar3);                  /* 2162-2164 */
-                R1 = Y(ar3) - Y(ar5);
-                R2 = R0 * Y(ar3);
+                R0 = X(5) - X(3);                  /* 2162-2164 */
+                R1 = Y(3) - Y(5);
+                R2 = R0 * Y(3);
                 work += 8;
                 if (gt)
                     break;
             }
-            R3 = R1 * X(ar3);                          /* 2165 */
+            R3 = R1 * X(3);                          /* 2165 */
             R2 = R2 + R3;
             R1 = fabsf(R1);
             work += 5;
