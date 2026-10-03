@@ -44,6 +44,7 @@ HLE_HOOKS = {
     0x00211D: ("hle_vtx_model", 0x002134), # bucle de vertices de modelos
     0x000521: ("hle_poly_emit", None),     # DIRQ.ASM envio de poligonos
     0x000221: ("hle_vtx_world", 0x000247), # DIRQ.ASM vertices con origen
+    0x00213E: ("hle_model_visible", (0x00216B, 0x002175)),  # visibilidad de modelo
 }
 
 
@@ -1280,6 +1281,12 @@ def gen_block(prog, gen, start, seq, live_out):
         fn, cont = HLE_HOOKS[start]
         if cont is None:
             gen.emit("return %s();" % fn)
+        elif isinstance(cont, tuple):
+            gen.emit("C.cyc += %d;" % (len(seq) + (3 if seq[-1].delayed else 0)))
+            gen.emit("n = %s();" % fn)
+            for c in cont:
+                gen.emit("if (n == 0x%06XU) %s" % (c, gen.jump(c)))
+            gen.emit("return n;")
         else:
             gen.emit("C.cyc += %d;" % (len(seq) + (3 if seq[-1].delayed else 0)))
             gen.emit("%s();" % fn)
@@ -1572,6 +1579,7 @@ def main():
     ap.add_argument("outdir")
     ap.add_argument("--coverage")
     ap.add_argument("--per-file", type=int, default=150)
+    ap.add_argument("--no-hle", default="", help="direcciones HLE a desactivar (hex, separadas por comas)")
     a = ap.parse_args()
 
     data = open(a.program, "rb").read()
@@ -1585,6 +1593,8 @@ def main():
         with open(a.coverage, "rb") as f:
             cov = f.read()
 
+    for x in filter(None, a.no_hle.split(",")):
+        HLE_HOOKS.pop(int(x, 16), None)
     prog = build(words, cov)
     gen = Gen(prog)
 

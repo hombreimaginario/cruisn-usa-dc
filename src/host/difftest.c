@@ -89,6 +89,17 @@ static int lock_failed;
 static uint32_t prev_block;
 static uint32_t cur_entry;
 
+/* paquetes de poligonos emitidos en cada ejecucion */
+static uint32_t pk_ref[4096][15], pk_rc[4096][15];
+static int npk_ref, npk_rc, pk_target;  /* 0 = ref, 1 = rc */
+
+static void pk_hook(const uint32_t *d, int page)
+{
+    (void)page;
+    if (pk_target == 0 && npk_ref < 4096) memcpy(pk_ref[npk_ref++], d, 60);
+    if (pk_target == 1 && npk_rc < 4096) memcpy(pk_rc[npk_rc++], d, 60);
+}
+
 static int regs_match(uint32_t at)
 {
     int i, bad = 0;
@@ -129,6 +140,7 @@ static int regs_match(uint32_t at)
 static void trace_hook(uint32_t pc)
 {
     vu_cur = mem_ref;
+    pk_target = 0;
     if (prev_block != 0) {          /* avanzar al menos una instruccion */
         c3x_step(&ref);
         ref_steps++;
@@ -138,6 +150,7 @@ static void trace_hook(uint32_t pc)
         ref_steps++;
     }
     vu_cur = mem_rc;
+    pk_target = 1;
     if (ref_steps >= MAX_STEPS)
         longjmp(limit_jmp, 2);
     if (!lock_failed && !regs_match(pc)) {
@@ -185,6 +198,9 @@ static void test_function(uint32_t entry)
     rt_cycle_limit = ~0ULL;
     rt_trace_hook = trace_hook;
     vu_cur = mem_rc;
+    npk_ref = npk_rc = 0;
+    pk_target = 1;
+    vu_poly_hook = pk_hook;
 
     r = setjmp(limit_jmp);
     if (r == 0) {
@@ -199,6 +215,7 @@ static void test_function(uint32_t entry)
     }
     /* terminar la referencia */
     vu_cur = mem_ref;
+    pk_target = 0;
     while (!(ref.pc == ret && ref.r[C3X_SP] == sp0 - 1) && ref_steps < MAX_STEPS) {
         c3x_step(&ref);
         ref_steps++;
@@ -226,6 +243,30 @@ static void test_function(uint32_t entry)
             break;
         }
     }
+    vu_poly_hook = NULL;
+    if (npk_ref != npk_rc) {
+        printf("  %06X: %d paquetes ref, %d recomp\n", (unsigned)entry, npk_ref, npk_rc);
+        bad++;
+    } else {
+        int p, w;
+        for (p = 0; p < npk_ref; p++)
+            for (w = 0; w < 15; w++)
+                if (pk_ref[p][w] != pk_rc[p][w]) {
+                    printf("  %06X: paquete %d palabra %d ref=%08X recomp=%08X\n", (unsigned)entry, p, w,
+                           (unsigned)pk_ref[p][w], (unsigned)pk_rc[p][w]);
+                    bad++;
+                    p = npk_ref;
+                    break;
+                }
+    }
+    if (memcmp(mem_rc->video, mem_ref->video, sizeof(mem_rc->video)) != 0) {
+        size_t k;
+        for (k = 0; k < VU_VIDEO_WORDS && mem_rc->video[k] == mem_ref->video[k]; k++)
+            ;
+        if (reported < 60)
+            printf("  %06X: framebuffer distinto desde el pixel %zX\n", (unsigned)entry, k);
+        bad++;
+    }
     if (memcmp(mem_rc->texram, mem_ref->texram, sizeof(mem_rc->texram)) != 0) {
         size_t k;
         for (k = 0; k < sizeof(mem_rc->texram) && mem_rc->texram[k] == mem_ref->texram[k]; k++)
@@ -236,7 +277,7 @@ static void test_function(uint32_t entry)
     }
     if (bad) {
         failures++;
-        if (reported++ < 60)
+        if (1)
             printf("FALLO funcion %06X (ret %06X, %ld pasos)\n", (unsigned)entry, (unsigned)ret, ref_steps);
     }
     /* seguir con el resultado de la referencia */

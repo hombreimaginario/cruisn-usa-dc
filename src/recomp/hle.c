@@ -9,6 +9,7 @@
  * del juego porque las secciones de textura se descomprimen continuamente
  * mientras se conduce.
  */
+#include <math.h>
 #include <stddef.h>
 
 #include "rt.h"
@@ -412,7 +413,7 @@ static inline void seti(int n, uint32_t v)
 uint32_t hle_poly_emit(void)
 {
     uint32_t *r = C.r;
-    uint32_t ar1 = r[AR1], ir0 = r[IR0], ir1 = r[IR1], r7;
+    uint32_t ar1 = r[AR1], ir0 = r[IR0], ir1 = r[IR1], r7, r6;
     uint32_t r3 = 0, ar2 = r[AR2], ar3 = r[AR3], ar4 = 0, ar5 = r[AR5];
     float f0 = 0, f1 = 0, f2 = 0;
     uint32_t i0 = 0, i1 = 0, i2 = 0;
@@ -422,6 +423,8 @@ uint32_t hle_poly_emit(void)
 
     SYNC_I(7);
     r7 = r[R7];
+    SYNC_I(6);
+    r6 = r[R6];
     {
         /* los registros de poligonos estan en ROM o FASTRAM: acceso directo */
     }
@@ -479,7 +482,7 @@ uint32_t hle_poly_emit(void)
             ar1 += 2;
             ar3 = r3 * 3;
             fifo_put(w0);
-            fifo_put(w0 >> 16);
+            fifo_put(r6);                                   /* 053C ... || STI R6 */
             fifo_put(rt_fix(MF(ar4 + ir0), 0));
             fifo_put(rt_fix(MF(ar4 + ir1), 0));
             fifo_put(rt_fix(MF(ar5 + ir0), 0));
@@ -512,4 +515,127 @@ uint32_t hle_poly_emit(void)
     C.r[C3X_ST] = (C.r[C3X_ST] & ~0x1Fu) | F_Z;
     C.cyc += (uint32_t)work;
     return POP() & 0xFFFFFFu;
+}
+
+/* ------------------------------------------------------------------------ */
+/* Prueba de visibilidad de modelo (bucle RPTB 0x213E-0x216A)                */
+/* ------------------------------------------------------------------------ */
+
+/*
+ * Recorre los poligonos del modelo (indices empaquetados en *AR4, de 5 en 5
+ * palabras) y para cada uno comprueba sus aristas en pantalla; si alguno las
+ * pasa todas sale por 0x2175 (modelo visible), y si no queda ninguno sale
+ * por 0x216B. Reproduce el flujo original con sus ranuras de retardo.
+ */
+uint32_t hle_model_visible(void)
+{
+    uint32_t *r = C.r;
+    uint32_t ar1 = 0, ar3 = 0, ar5 = 0, ar6 = 0, ar4 = r[AR4];
+    uint32_t ir0 = r[IR0], ir1 = r[IR1], r4i, r5i, ri1;
+    float R0 = getf(0), R1 = 0, R2 = getf(2), R3 = getf(3);
+    uint32_t rc = r[RC_];
+    uint32_t work = 0;
+    int r1_is_float = 0;
+
+    SYNC_I(4); r4i = r[4];
+    SYNC_I(5); r5i = r[5];
+    SYNC_I(1); ri1 = r[1];
+
+#define X(a) MF((a) + ir0)
+#define Y(a) MF((a) + ir1)
+    for (;;) {
+        int exit_found = 0;
+        ar1 = (ri1 & r4i) * 3;                         /* 213E-213F */
+        ri1 >>= 8;                                     /* 2140 */
+        ar3 = (ri1 & r4i) * 3;                         /* 2141-2142 */
+        ri1 >>= 8;                                     /* 2143 */
+        ar5 = (ri1 & r4i) * 3;                         /* 2144-2145 */
+        ar6 = rt_shift(ri1, r5i, 0, 0) * 3;            /* 2146-2147 */
+        /* 2149 BEQD 2152, ranuras 214A-214C */
+        R0 = X(ar6) - X(ar5);
+        R1 = Y(ar5) - Y(ar6);
+        R2 = R0 * Y(ar5);
+        r1_is_float = 1;
+        work += 12;
+        do {
+            if (ar6 != ar5) {
+                R3 = R1 * X(ar5);                      /* 214D */
+                R2 = R2 + R3;
+                R1 = fabsf(R1);
+                {
+                    int gt = R2 > R1;                  /* 2150-2151 BGTD 216A */
+                    R0 = X(ar1) - X(ar6);              /* ranuras 2152-2154 */
+                    R1 = Y(ar6) - Y(ar1);
+                    R2 = R0 * Y(ar6);
+                    work += 8;
+                    if (gt)
+                        break;
+                }
+            } else {
+                R0 = X(ar1) - X(ar6);                  /* 2152-2154 */
+                R1 = Y(ar6) - Y(ar1);
+                R2 = R0 * Y(ar6);
+            }
+            R3 = R1 * X(ar6);                          /* 2155 */
+            R2 = R2 + R3;
+            R1 = fabsf(R1);
+            {
+                int gt = R2 > R1;                      /* 2159 BGTD 216A */
+                R0 = X(ar3) - X(ar1);                  /* 215A-215C */
+                R1 = Y(ar1) - Y(ar3);
+                R2 = R0 * Y(ar1);
+                work += 8;
+                if (gt)
+                    break;
+            }
+            R3 = R1 * X(ar1);                          /* 215D */
+            R2 = R2 + R3;
+            R1 = fabsf(R1);
+            {
+                int gt = R2 > R1;                      /* 2161 BGTD 216A */
+                R0 = X(ar5) - X(ar3);                  /* 2162-2164 */
+                R1 = Y(ar3) - Y(ar5);
+                R2 = R0 * Y(ar3);
+                work += 8;
+                if (gt)
+                    break;
+            }
+            R3 = R1 * X(ar3);                          /* 2165 */
+            R2 = R2 + R3;
+            R1 = fabsf(R1);
+            work += 5;
+            if (R2 <= R1)                              /* 2168-2169 BLE 2175 */
+                exit_found = 1;
+        } while (0);
+
+        if (exit_found) {
+            /* sale con el RPTB aun activo, como el original */
+            r[RC_] = rc;
+            setf(0, R0); setf(1, R1); setf(2, R2); setf(3, R3);
+            r[AR1] = ar1; r[AR3] = ar3; r[AR4] = ar4; r[AR5] = ar5; r[AR6] = ar6;
+            C.r[C3X_ST] = (C.r[C3X_ST] & ~0x1Fu) | (R2 - R1 == 0.0f ? F_Z : 0) |
+                          (R2 - R1 < 0.0f ? F_N : 0);
+            C.cyc += work;
+            return 0x002175u;
+        }
+        ri1 = RD(ar4);                                 /* 216A */
+        ar4 += 5;
+        r1_is_float = 0;
+        work += 1;
+        if ((int32_t)--rc < 0)
+            break;
+    }
+#undef X
+#undef Y
+    (void)r1_is_float;
+    r[RC_] = 0xFFFFFFFFu;
+    C.r[C3X_ST] &= ~C3X_ST_RM;
+    setf(0, R0); setf(2, R2); setf(3, R3);
+    seti(1, ri1);
+    r[AR1] = ar1; r[AR3] = ar3; r[AR4] = ar4; r[AR5] = ar5; r[AR6] = ar6;
+    C.r[C3X_ST] = (C.r[C3X_ST] & ~0x1Fu) | rt_nz(ri1);
+    r[RS_] = 0x00213Eu;
+    r[RE_] = 0x00216Au;
+    C.cyc += work;
+    return 0x00216Bu;
 }
