@@ -7,7 +7,8 @@ OBJS = src/platform/main_dc.o \
        src/c3x/interp.o \
        src/vunit/mem.o \
        src/vunit/video.o \
-       src/platform/pvr_render.o
+       src/platform/pvr_render.o \
+       src/platform/sound_dc.o
 
 KOS_CFLAGS += -std=gnu99 -O2 -Wall -Wextra -DVU_NO_RAM2 -DVU_NO_UNMAPPED_LOG
 
@@ -42,6 +43,7 @@ GENERATED ?= generated
 cdi: $(TARGET)
 	$(MKDCDISC) -e $(TARGET) -o cruisn-usa-dc.cdi --allow-overwrite -n "CRUISN USA DC" \
 		-f $(GENERATED)/program.bin -f $(GENERATED)/gfx.bin \
-		$(if $(wildcard $(GENERATED)/cmos.bin),-f $(GENERATED)/cmos.bin)
+		$(if $(wildcard $(GENERATED)/cmos.bin),-f $(GENERATED)/cmos.bin) \
+		$(if $(wildcard $(GENERATED)/sound.bin),-f $(GENERATED)/sound.bin)
 
 .PHONY: all clean rm-elf run cdi

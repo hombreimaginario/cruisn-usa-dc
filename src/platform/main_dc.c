@@ -23,6 +23,7 @@
 #include "../c3x/c3x.h"
 #include "../vunit/mem.h"
 #include "pvr_render.h"
+#include "sound_dc.h"
 
 #define INSNS_PER_FRAME (25000000 / 57)
 #define TICK 500
@@ -220,6 +221,7 @@ void rt_platform_event(void)
     pvrr_frame(0);
 #endif
     read_inputs();
+    sound_frame();
 #ifndef CUSA_NO_THROTTLE
     {
         /* Ritmo del original: 57 frames por segundo. Si vamos adelantados se
@@ -294,6 +296,8 @@ int main(int argc, char **argv)
 
 #ifdef CUSA_RECOMP
     pvrr_init();
+    if (sound_init("/cd/sound.bin") == 0)
+        vu_sound_hook = sound_dcs_write;
     vu_get_cycles = rc_cycles;
     vu_get_pc = rc_pc;
     vu_raise_irq = rc_irq;

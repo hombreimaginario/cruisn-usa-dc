@@ -13,21 +13,41 @@ Comandos observados (registro con `CUSA_SOUNDLOG=1 build/cusa_recomp ...`):
 | Secuencia | Significado (deducido) |
 |---|---|
 | `55AA vv ~vv` | volumen general |
-| `55AB/55AC/55AD vv ~vv` + código | volumen de la pista (B, C, D) para el código que sigue |
-| `55CC xx yy` | parámetro continuo del motor (xx sube y baja con las revoluciones) |
-| `0000` | parar todo |
+| `55AB+n vv ~vv` | volumen de la pista n (0-3) del DCS; `SNDFX` lo manda justo antes del código |
+| `55CC rr vv` | motor del jugador (`PLYR_ENGINE`): rr = revoluciones, vv = volumen. Lo sintetiza el DCS; el tono sube casi en línea recta (f0 ≈ 0.14·rr + 4.4 Hz, medido en MAME) y el volumen es lineal. `0000` no lo para; se apaga con volumen 0 |
+| `0000` | parar todo (menos el motor) |
+| `03E3`-`03E6` | parar la pista 0-3 (`KILLCHAN0-3`) |
 | `00C0`-`00CB` | sonidos del motor/neumáticos, se reenvían cada 2 frames |
 | `0085` | moneda |
 | `01F4`/`0211`/`0210`/... | música y voces del modo demo |
 
 `SNDTAB.INC` de la fuente lista 179 códigos con su prioridad, canal lógico (CHAN0-3) y tiempo de bloqueo del canal.
 
-## Plan para Dreamcast
+El DCS tiene 4 pistas (las `CHAN0-3` de `SNDTAB.INC`): la 0 es la música (emisoras de radio y temas), la 1 y la 2 efectos, la 3 voces. Un código nuevo en una pista corta el anterior, y reenviar la misma música la **reinicia** (comprobado en MAME comparando con una grabación continua).
+
+## Implementación en Dreamcast
 
 Emular el ADSP-2105 en el SH-4 a la vez que el juego no es viable, así que el sonido se **pre-renderiza** con MAME a partir de la ROM del usuario:
 
-1. `tools/mame/render_dcs.lua`: arranca el juego en MAME, desactiva `SENDSND` y envía cada código al DCS por `0x9A0000`, grabando la salida con `-wavwrite`.
-2. Un script en Python trocea el WAV por código, recorta silencios, detecta bucles (música, motor) y convierte a ADPCM de Yamaha (efectos, en la RAM del AICA) o PCM para streaming desde el CD (música).
-3. En Dreamcast, un decodificador del protocolo anterior traduce los comandos del juego a reproducción con `snd_sfx_play_ex` (volumen, tono, bucle) y streaming para la música.
+1. `tools/mame/render_dcs.lua`: arranca el juego en MAME, desactiva `SENDSND` y envía cada código (o secuencias de palabras, p. ej. `eng90 4 55CC 90FF` para el motor) al DCS por `0x9A0000`, grabando la salida con `-wavwrite`.
+2. `tools/dcs_bank.py` (+ `tools/dcsdsp.c` para remuestrear, codificar ADPCM y buscar bucles) genera `generated/sound.bin`:
+   - pista 0 → música en ADPCM a 22050 Hz para streaming desde el CD. Si sigue sonando al final de la grabación se busca el periodo exacto del bucle (la salida del DCS es digital y se repite casi muestra a muestra);
+   - resto → ADPCM en la RAM del AICA, a la mayor frecuencia que quepa (14 kHz con el presupuesto actual). Los bucles (derrapes, sirenas, multitudes...) se recortan a 2,5 s con fundido cruzado;
+   - motor → 4 muestras PCM de 1 s en bucle (60, 90, C0 y E0 revoluciones); en consola se elige la más cercana y se cambia la frecuencia.
+   - Los ADPCM en bucle se codifican dos veces el tramo del bucle para que el estado del decodificador al final coincida con el del inicio (sin chasquidos).
+3. `src/platform/sound_dc.c` decodifica el protocolo que escribe el juego (gancho `vu_sound_hook`) y reproduce: un canal del AICA por pista, uno para el motor y un stream para la música, que lee del CD un hilo aparte en bloques de 64 KB.
+
+Grabación (unos 45 min de MAME a ~14x):
+
+```
+cd <dir de mame con crusnusa41>
+DCS_CODES=generated/dcs_codes.txt mame crusnusa41 -video none -nothrottle \
+    -wavwrite todo.wav -autoboot_script tools/mame/render_dcs.lua > todo.log
+# segunda pasada de 200-400 s para las músicas y bucles, y el motor
+python3 tools/dcs_bank.py -o generated/sound.bin --sndtab src_orig \
+    --budget 1792000 todo.wav todo.log bucles.wav bucles.log
+```
 
 Nada de este audio generado se sube al repositorio.
+
+Pendiente: comprobar de oído en consola real (en Flycast se ve que decodifica y que el stream se alimenta), y la música `0002` (Munster surf) y `0171` no muestran un bucle exacto en 400 s: se repiten enteras.

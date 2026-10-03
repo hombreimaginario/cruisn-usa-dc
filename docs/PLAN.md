@@ -55,9 +55,9 @@ Alternativas descartadas:
 - Conversión de texturas de `WAVERAM` (8 bits + paleta) a texturas PVR con caché por página y paleta.
 - Resolución 640x480 escalando desde 512x400.
 
-### Fase 4: Sonido
-- Herramienta en PC que emule la placa DCS (ADSP-2105 + ROM `u2..u9`) y grabe cada comando de efecto/música a ADPCM.
-- Reproductor en el AICA que reciba los mismos comandos que el juego escribe en `SOUND`.
+### Fase 4: Sonido (hecha, falta probar de oído en consola)
+- [x] MAME graba cada código del DCS (`tools/mame/render_dcs.lua`) y `tools/dcs_bank.py` genera `sound.bin` (efectos ADPCM, música en streaming con su bucle, motor por revoluciones).
+- [x] `src/platform/sound_dc.c`: decodifica los comandos que el juego escribe en `SOUND` y los reproduce en el AICA. Detalles en [SONIDO.md](SONIDO.md).
 
 ### Fase 5: Controles, guardado y empaquetado
 - Mando estándar y Race Controller; cambio de marchas en botones.

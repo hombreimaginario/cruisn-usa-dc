@@ -4,7 +4,7 @@ Port en desarrollo del arcade **Cruis'n USA** (Midway, 1994) a **Sega Dreamcast*
 
 El juego original corre en un TMS320C31 sobre la placa Midway V-Unit. Este port traduce el código de la ROM a C (recompilación estática) y sustituye el hardware de vídeo y sonido por implementaciones nativas para el PowerVR y el AICA. Detalles en [docs/ANALISIS.md](docs/ANALISIS.md) y [docs/PLAN.md](docs/PLAN.md).
 
-**Estado:** el código del arcade, recompilado a C, arranca en Dreamcast (probado en Flycast) y dibuja con el PowerVR. En el ordenador es jugable (intérprete y versión recompilada). En consola aún va 1-3 veces más lento que el original según la escena y no tiene sonido. Ver [docs/PLAN.md](docs/PLAN.md).
+**Estado:** el código del arcade, recompilado a C, arranca en Dreamcast (probado en Flycast) y dibuja con el PowerVR. En el ordenador es jugable (intérprete y versión recompilada). En consola aún va 1-3 veces más lento que el original según la escena. El sonido se pre-renderiza con MAME a partir de tu ROM (ver [docs/SONIDO.md](docs/SONIDO.md)). Ver [docs/PLAN.md](docs/PLAN.md).
 
 ## Lo que necesitas
 
