@@ -400,9 +400,9 @@ typedef struct {
 /* Poligonos del frame ordenados por textura (orden de primer uso), por
  * separado para la lista opaca y la punch-through. El orden de dibujo del
  * original lo mantiene la Z. */
-static draw_item items[2][MAX_POLYS];
+static draw_item items[3][MAX_POLYS];   /* opaca, punch-through, tramada */
 static draw_item unsorted[MAX_POLYS];
-static uint16_t seq_count[2][MAX_POLYS + 1];
+static uint16_t seq_count[3][MAX_POLYS + 1];
 
 static void submit_list(pvr_list_t list, const draw_item *it, int n)
 {
@@ -423,12 +423,14 @@ static void submit_list(pvr_list_t list, const draw_item *it, int n)
             uint16_t c = vu.coloram[((d[1] & 0xFF00) | (d[0] & 0xFF)) & 0x7FFF];
             argb = 0xFF000000u | ((c & 0x7C00) << 9) | ((c & 0x03E0) << 6) | ((c & 0x1F) << 3);
         }
+        if (list == PVR_LIST_TR_POLY)
+            argb = (argb & 0x00FFFFFFu) | 0x80000000u;
         if (t != cur || (!t && argb != cur_col)) {
             pvr_poly_hdr_t *hp;
             if (t) {
                 pvr_poly_cxt_txr(&cxt, list, PVR_TXRFMT_ARGB1555 | PVR_TXRFMT_NONTWIDDLED,
                                  t->w, t->h, t->ptr, PVR_FILTER_NONE);
-                cxt.txr.env = PVR_TXRENV_REPLACE;
+                cxt.txr.env = list == PVR_LIST_TR_POLY ? PVR_TXRENV_MODULATEALPHA : PVR_TXRENV_REPLACE;
             } else {
                 pvr_poly_cxt_col(&cxt, list);
             }
@@ -516,7 +518,7 @@ static int hold_frames;
 static int render_page(int page, int shot)
 {
     unsigned skipped_now = 0;
-    int n = page_npolys[page], i, m = 0, n_op = 0, n_pt = 0;
+    int n = page_npolys[page], i, m = 0, n_op = 0, n_pt = 0, n_tr = 0;
 
     uint64_t ta = timer_us_gettime64(), tb, tc;
     frame_no++;
@@ -524,8 +526,8 @@ static int render_page(int page, int shot)
     texels_this_frame = 0;
     {
         /* textura de cada poligono y numero de orden por textura */
-        uint16_t nseq[2] = { 1, 1 };
-        int l, total[2] = { 0, 0 };
+        uint16_t nseq[3] = { 1, 1, 1 };
+        int l, total[3] = { 0, 0, 0 };
         memset(seq_count, 0, sizeof(seq_count));
         for (i = 0; i < n; i++) {
             const uint32_t *d = page_polys[page][i].d;
@@ -546,6 +548,13 @@ static int render_page(int page, int shot)
                 }
                 sq = t->seq;
             }
+            /* DITHER (bit 13): el V-Unit pinta uno de cada dos pixeles, una
+             * sombra o velo semitransparente; aqui va a la lista translucida
+             * al 50 %, en el orden original */
+            if (d[0] & 0x2000) {
+                l = 2;
+                sq = 0;
+            }
             unsorted[m].d = d;
             unsorted[m].t = t;
             unsorted[m].z = 1.0f + (float)i * (1.0f / 4096.0f);
@@ -554,16 +563,21 @@ static int render_page(int page, int shot)
             m++;
         }
         /* ordenacion por cuentas (estable) */
-        for (l = 0; l < 2; l++)
+        for (l = 0; l < 3; l++)
             for (i = 1; i <= nseq[l]; i++)
                 seq_count[l][i] += seq_count[l][i - 1];
         for (i = 0; i < m; i++) {
             tex_entry *t = unsorted[i].t;
-            l = t ? t->pt : 0;
-            items[l][seq_count[l][t ? t->seq : 0]++] = unsorted[i];
+            if (unsorted[i].d[0] & 0x2000)
+                items[2][seq_count[2][0]++] = unsorted[i];
+            else {
+                l = t ? t->pt : 0;
+                items[l][seq_count[l][t ? t->seq : 0]++] = unsorted[i];
+            }
         }
         n_op = total[0];
         n_pt = total[1];
+        n_tr = total[2];
     }
     tb = timer_us_gettime64();
     t_tex += tb - ta;
@@ -603,6 +617,9 @@ static int render_page(int page, int shot)
     pvr_list_finish();
     pvr_list_begin(PVR_LIST_PT_POLY);
     submit_list(PVR_LIST_PT_POLY, items[1], n_pt);
+    pvr_list_finish();
+    pvr_list_begin(PVR_LIST_TR_POLY);
+    submit_list(PVR_LIST_TR_POLY, items[2], n_tr);
     pvr_list_finish();
     pvr_scene_finish();
     t_sub += timer_us_gettime64() - tc;
@@ -656,7 +673,7 @@ static void dump_shot(void)
 void pvrr_init(void)
 {
     pvr_init_params_t params = {
-        { PVR_BINSIZE_16, PVR_BINSIZE_0, PVR_BINSIZE_0, PVR_BINSIZE_0, PVR_BINSIZE_16 },
+        { PVR_BINSIZE_16, PVR_BINSIZE_0, PVR_BINSIZE_16, PVR_BINSIZE_0, PVR_BINSIZE_16 },
         512 * 1024, 0, 0, 0, 3, 0
     };
     pvr_init(&params);

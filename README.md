@@ -57,14 +57,16 @@ make && make cdi
 
 | Mando | Arcade |
 |---|---|
-| Stick analógico | volante |
-| Gatillo R / L | acelerador / freno |
-| A / B | subir / bajar marcha (4 marchas) |
-| Cruceta izquierda, arriba, derecha | vistas 1, 2, 3 |
-| X | cambiar emisora de radio |
-| Y | moneda |
+| Stick analógico o cruceta izquierda/derecha | volante |
+| Gatillo R o A | acelerador |
+| Gatillo L o B | freno |
+| Cruceta arriba / abajo | subir / bajar marcha (cambio manual) |
+| Y | cambiar de vista |
+| X | cambiar de emisora de radio |
 | START | empezar |
 | START + Y | botón de servicio (menú de ajustes del arcade) |
+
+El juego está siempre en juego libre (no hace falta meter monedas).
 
 Los ajustes, récords y contadores del arcade (su CMOS) se guardan solos en la primera VMU (fichero `CRUISNUS`, unos 66 bloques) cuando cambian; si no hay VMU se usa la CMOS calibrada del CD.
 

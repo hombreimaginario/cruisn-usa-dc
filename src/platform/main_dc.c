@@ -41,7 +41,7 @@ static void raise_irq(int bit) { c3x_set_irq(&cpu, bit); }
 #define GFX_PAGES      32            /* 1 MB de cache */
 
 static file_t gfx_file = FILEHND_INVALID;
-static uint32_t gfx_cache[GFX_PAGES][GFX_PAGE_WORDS];
+static uint32_t gfx_cache[GFX_PAGES][GFX_PAGE_WORDS] __attribute__((aligned(32)));
 static int32_t gfx_tag[GFX_PAGES];
 
 static uint32_t gfx_fetch(uint32_t word)
@@ -67,7 +67,9 @@ static void *load_file(const char *path, size_t *size_out)
     if (f == FILEHND_INVALID)
         return NULL;
     size = fs_total(f);
-    buf = malloc(size);
+    /* buffer alineado a 32: el lector de CD de KOS usa DMA y es unas 100
+     * veces mas rapido (sin alinear, 2 MB tardaban 17 s) */
+    buf = memalign(32, size);
     if (buf && fs_read(f, buf, size) != (ssize_t)size) {
         free(buf);
         buf = NULL;
@@ -106,27 +108,63 @@ static void read_inputs(void)
     if (!dev || !(st = (cont_state_t *)maple_dev_status(dev)))
         return;
     b = st->buttons;
+    /*
+     * Mando de Dreamcast (y teclado de Flycast con su mapeo por defecto):
+     *   stick o cruceta izquierda/derecha  volante
+     *   gatillo R o A                      acelerador
+     *   gatillo L o B                      freno
+     *   cruceta arriba / abajo             subir / bajar marcha (cambio manual)
+     *   Y                                  cambiar de vista
+     *   X                                  cambiar de emisora
+     *   START                              empezar;  START+Y: servicio
+     */
     if ((b & CONT_START) && (b & CONT_Y))
-        sw |= SW_DIAG;                       /* START+Y: boton de servicio */
+        sw |= SW_DIAG;
     else if (b & CONT_START)
         sw |= SW_START;
-    if ((b & CONT_Y) && !(b & CONT_START))
-        sw |= SW_COIN1;
-    if ((b & CONT_A) && !(prev & CONT_A) && gear < 3)
+    if ((b & CONT_DPAD_UP) && !(prev & CONT_DPAD_UP) && gear < 3)
         gear++;
-    if ((b & CONT_B) && !(prev & CONT_B) && gear > 0)
+    if ((b & CONT_DPAD_DOWN) && !(prev & CONT_DPAD_DOWN) && gear > 0)
         gear--;
     sw |= gears[gear];
-    if (b & CONT_DPAD_LEFT)  sw |= SW_VIEW1;
-    if (b & CONT_DPAD_UP)    sw |= SW_VIEW2;
-    if (b & CONT_DPAD_RIGHT) sw |= SW_VIEW3;
-    if (b & CONT_X)          sw |= SW_RADIO;
+    {
+        /* las vistas son tres botones en el arcade; Y las recorre */
+        static const uint32_t views[3] = { SW_VIEW1, SW_VIEW2, SW_VIEW3 };
+        static int view, view_hold;
+        if ((b & CONT_Y) && !(prev & CONT_Y) && !(b & CONT_START)) {
+            view = (view + 1) % 3;
+            view_hold = 6;
+        }
+        if (view_hold) {
+            view_hold--;
+            sw |= views[view];
+        }
+    }
+    if (b & CONT_X)
+        sw |= SW_RADIO;
     prev = b;
 
     vu.in.switches = sw;
-    vu.in.wheel = (uint8_t)(0x80 + st->joyx);   /* joyx: -128..127 */
-    vu.in.gas = (uint8_t)st->rtrig;
-    vu.in.brake = (uint8_t)st->ltrig;
+    {
+        /* volante: el stick si se mueve; si no, la cruceta con un giro
+         * progresivo (la CMOS esta calibrada de 0x10 a 0xF0) */
+        static int dwheel = 0x80;
+        int target = 0x80;
+        if (b & CONT_DPAD_LEFT)
+            target = 0x10;
+        else if (b & CONT_DPAD_RIGHT)
+            target = 0xF0;
+        if (dwheel < target)
+            dwheel = dwheel + 12 > target ? target : dwheel + 12;
+        else if (dwheel > target)
+            dwheel = dwheel - 12 < target ? target : dwheel - 12;
+        if (st->joyx < -8 || st->joyx > 8)
+            vu.in.wheel = (uint8_t)(0x80 + st->joyx);   /* joyx: -128..127 */
+        else
+            vu.in.wheel = (uint8_t)dwheel;
+    }
+    vu.in.gas = (b & CONT_A) ? 0xFF : (uint8_t)st->rtrig;
+    vu.in.brake = (b & CONT_B) ? 0xFF : (uint8_t)st->ltrig;
 #ifdef CUSA_AUTOPLAY
     {
         /* Prueba sin mando: moneda, START y una carrera acelerando (igual que
@@ -142,10 +180,8 @@ static void read_inputs(void)
         vu.in.wheel = 0x80;
         vu.in.gas = f >= 2400 ? 0xE0 : 0;
         vu.in.brake = 0;
-        if (f >= 3000 && f < 3200)
-            vu.in.wheel = 0x40;
-        else if (f >= 3200 && f < 3400)
-            vu.in.wheel = 0xC0;
+        if (f >= 2600)                  /* zigzag entre el trafico */
+            vu.in.wheel = (f / 150) % 2 ? 0x50 : 0xB0;
     }
 #endif
 }
@@ -351,6 +387,8 @@ void rt_platform_event(void)
 #endif
 #endif
 
+static uint64_t t_boot;
+
 int main(int argc, char **argv)
 {
     uint32_t *program;
@@ -361,6 +399,11 @@ int main(int argc, char **argv)
 
     vid_set_mode(DM_640x480, PM_RGB565);
     vid_clear(0, 0, 0);
+    /* Pantalla de carga: leer el programa, el sonido y arrancar el juego
+     * lleva unos segundos y en negro parece colgado. */
+    bfont_draw_str(vram_s + 220 * 640 + 236, 640, 1, "CRUIS'N USA");
+    bfont_draw_str(vram_s + 250 * 640 + 248, 640, 1, "Cargando...");
+    t_boot = timer_ms_gettime64();
 #ifdef CUSA_RECOMP
     printf("Cruis'n USA DC - codigo recompilado\n");
 #else
@@ -385,12 +428,14 @@ int main(int argc, char **argv)
     free(cmos);
 
 #ifdef CUSA_RECOMP
+    printf("arranque: programa y CMOS en %u ms\n", (unsigned)(timer_ms_gettime64() - t_boot));
     pvrr_init();
 #ifdef CUSA_SHOT
     pvrr_reserve_shot();
 #endif
     if (sound_init("/cd/sound.bin") == 0)
         vu_sound_hook = sound_dcs_write;
+    printf("arranque: sonido cargado a los %u ms\n", (unsigned)(timer_ms_gettime64() - t_boot));
     vu_get_cycles = rc_cycles;
     vu_get_pc = rc_pc;
     vu_raise_irq = rc_irq;

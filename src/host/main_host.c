@@ -132,6 +132,16 @@ static void *load_file(const char *dir, const char *name, size_t *size)
     return buf;
 }
 
+static int cur_frame;
+/* CUSA_SOUNDLOG: bytes del puerto del DCS, como en cusa_recomp */
+static void sound_log_hook(uint32_t v)
+{
+    if (v & 0x100)
+        printf("SND frame %d reset %u\n", cur_frame, (unsigned)(v & 1));
+    else
+        printf("SND frame %d byte %02X\n", cur_frame, (unsigned)v);
+}
+
 static void dump_ppm(const char *dir, int frame)
 {
     static uint16_t rgb[512 * 400];
@@ -191,6 +201,8 @@ int main(int argc, char **argv)
     if (getenv("CUSA_PCHIST"))
         pc_hist = calloc(0x1000000, sizeof(uint32_t));
     vu_reset(program, gfx);
+    if (getenv("CUSA_SOUNDLOG"))
+        vu_sound_hook = sound_log_hook;
     if (getenv("CUSA_SKIPTESTS"))
         vu_skip_memtests();
     vu.trace_unmapped = getenv("CUSA_TRACE") != NULL;
@@ -218,6 +230,7 @@ int main(int argc, char **argv)
     for (frame = 0; frame < frames; frame++) {
         uint64_t end = (uint64_t)(frame + 1) * INSNS_PER_FRAME;
         vu.polys_frame = 0;
+        cur_frame = frame;
         if (getenv("CUSA_INPUT"))
             apply_script(getenv("CUSA_INPUT"), frame);
         if (getenv("CUSA_ANALOG"))

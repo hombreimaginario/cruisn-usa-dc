@@ -40,6 +40,7 @@ static void draw_triangle(uint16_t *page, const vtx *a, const vtx *b, const vtx 
     int textured = (ctrl & 0x300) == 0x100;
     int zs = (ctrl & 0x800) != 0;
     int nzr = (ctrl & 0x400) != 0;
+    int dither = (ctrl & 0x2000) != 0;  /* uno de cada dos pixeles */
 
     if (!edge_setup(a, b, c, &area))
         return;
@@ -65,6 +66,8 @@ static void draw_triangle(uint16_t *page, const vtx *a, const vtx *b, const vtx 
             float w2 = (a->x - px) * (b->y - py) - (a->y - py) * (b->x - px);
             uint16_t pix;
 
+            if (dither && ((x ^ y) & 1))
+                continue;
             if (area > 0) {
                 if (w0 < 0 || w1 < 0 || w2 < 0) continue;
             } else {
