@@ -20,6 +20,18 @@ static int frames, every, frame;
 static uint64_t frame_end = INSNS_PER_FRAME;
 static clock_t t_start;
 
+static unsigned poly_ctrl_hist[256], poly_base_max, poly_pal_max;
+static void stats_hook(const uint32_t *d, int page)
+{
+    poly_ctrl_hist[(d[0] >> 8) & 0xFF]++;
+    if (frame == 1299 && (int16_t)d[3] > 300 && (int16_t)d[2] > 150 && (int16_t)d[2] < 360)
+        printf("  poli ctrl=%04X pal=%02X base=%04X uv=%04X %04X %04X %04X xy=%d,%d\n", (unsigned)d[0], (unsigned)(d[1] >> 8),
+               (unsigned)d[14], (unsigned)d[10], (unsigned)d[11], (unsigned)d[12], (unsigned)d[13], (int16_t)d[2], (int16_t)d[3]);
+    if ((d[14] & 0x7FFF) > poly_base_max) poly_base_max = d[14] & 0x7FFF;
+    if ((d[1] >> 8) > poly_pal_max) poly_pal_max = d[1] >> 8;
+    (void)page;
+}
+
 static uint64_t get_cycles(void) { return rt_cycles(); }
 static uint32_t get_pc(void) { return 0; }
 static void raise_irq(int bit)
@@ -173,6 +185,13 @@ void rt_platform_event(void)
     vu.polys_frame = 0;
     if (frame >= frames) {
         printf("%d frames en %.2f s (%lu esperas saltadas)\n", frames, (double)(clock() - t_start) / CLOCKS_PER_SEC, idle_calls);
+        if (getenv("CUSA_POLYSTATS")) {
+            int k;
+            for (k = 0; k < 256; k++)
+                if (poly_ctrl_hist[k])
+                    printf("  ctrl %02X00: %u\n", k, poly_ctrl_hist[k]);
+            printf("  base max %X, paleta max %X\n", poly_base_max, poly_pal_max);
+        }
 #ifdef RT_COUNT_SLOW
         {
             extern uint32_t rt_slow_count[2][256];
@@ -223,6 +242,8 @@ int main(int argc, char **argv)
         memcpy(vu.cmos, cm, n);
     free(cm);
 
+    if (getenv("CUSA_POLYSTATS"))
+        vu_poly_hook = stats_hook;
     rt_reset();
 #ifdef RT_TRACE_ON
     prof_cycles = calloc(0x1000000, sizeof(uint64_t));

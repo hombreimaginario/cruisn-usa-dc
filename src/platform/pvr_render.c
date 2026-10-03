@@ -86,7 +86,7 @@ static void pool_init(void)
 {
     int i;
     uint32_t avail = (uint32_t)pvr_mem_available();
-    while ((1u << pool_size_order) > avail - 256 * 1024 && pool_size_order > 18)
+    while ((1u << pool_size_order) > avail - 64 * 1024 && pool_size_order > 18)
         pool_size_order--;
     pool = pvr_mem_malloc(1u << pool_size_order);
     for (i = 0; i < NORD; i++)
@@ -147,10 +147,12 @@ static uint32_t frame_no;
 static uint16_t conv_buf[256 * 256] __attribute__((aligned(32)));
 static pvr_ptr_t cpu_fb_tex, shot_tex;
 
-static unsigned stat_conv, stat_polys;
+static unsigned stat_conv, stat_polys, stat_skipped;
 static uint64_t t_tex, t_wait, t_sub;
 static unsigned conv_this_frame;
-#define MAX_CONV_PER_FRAME 24
+#define MAX_CONV_PER_FRAME 400
+#define MAX_TEXELS_PER_FRAME (192 * 1024)
+static uint32_t texels_this_frame;
 
 static inline uint16_t argb1555(uint16_t c, int opaque)
 {
@@ -247,6 +249,9 @@ static tex_entry *get_texture(const uint32_t *d)
     r.zs = (d[0] & 0x800) != 0;
     r.nzr = (d[0] & 0x400) != 0;
     r.color = r.nzr ? (d[0] & 0xFF) : 0;
+#ifdef PVR_FULL_TEX
+    umin = 0; vmin = 0; umax = 255;
+#endif
     r.u0 = umin & ~15u;
     r.v0 = vmin & ~15u;
     pow2(umax - r.u0 + 1, &r.w, &r.wc);
@@ -282,16 +287,18 @@ static tex_entry *get_texture(const uint32_t *d)
     if (t->blk_sum != g || t->pal_gen != pg || !t->ptr) {
         uint32_t pixdata = (d[1] & 0xFF00) | (d[0] & 0xFF);
         /* limite de conversiones por frame: se reutiliza la version anterior */
-        if (conv_this_frame >= MAX_CONV_PER_FRAME && t->ptr) {
+        if ((conv_this_frame >= MAX_CONV_PER_FRAME || texels_this_frame >= MAX_TEXELS_PER_FRAME) && t->ptr) {
             t->last_used = frame_no;
             return t;
         }
-        if (conv_this_frame >= MAX_CONV_PER_FRAME || !convert(t, &r, pixdata)) {
+        if (conv_this_frame >= MAX_CONV_PER_FRAME || texels_this_frame >= MAX_TEXELS_PER_FRAME ||
+            !convert(t, &r, pixdata)) {
             if (!t->ptr)
                 t->key = 0;
             return NULL;
         }
         conv_this_frame++;
+        texels_this_frame += (uint32_t)t->w * t->h;
         t->blk_sum = g;
         t->pal_gen = pg;
     }
@@ -405,6 +412,13 @@ static void draw_cpu_framebuffer(int page)
     pvr_vertex_t v;
     const uint16_t *src = &vu.video[page ? 0x40000 : 0];
     int y, x, k;
+
+    /* textura de 512x512 tomada del bloque de texturas mientras se usa */
+    if (!cpu_fb_tex) {
+        while (!(cpu_fb_tex = pool_alloc(512 * 512 * 2)))
+            if (!evict_one())
+                return;
+    }
     static const float xs[4] = { 0, 640, 0, 640 }, ys[4] = { 0, 0, 480, 480 };
     static const float us[4] = { 0, 1, 0, 1 };
 
@@ -420,6 +434,7 @@ static void draw_cpu_framebuffer(int page)
     }
     pvr_poly_cxt_txr(&cxt, PVR_LIST_OP_POLY, PVR_TXRFMT_RGB565 | PVR_TXRFMT_NONTWIDDLED,
                      512, 512, cpu_fb_tex, PVR_FILTER_NONE);
+    (void)0;
     cxt.txr.env = PVR_TXRENV_REPLACE;
     pvr_poly_compile(&hdr, &cxt);
     pvr_prim(&hdr, sizeof(hdr));
@@ -444,13 +459,16 @@ static void render_page(int page, int shot)
     uint64_t ta = timer_us_gettime64(), tb, tc;
     frame_no++;
     conv_this_frame = 0;
+    texels_this_frame = 0;
     for (i = 0; i < n; i++) {
         const uint32_t *d = page_polys[page][i].d;
         tex_entry *t = NULL;
         if ((d[0] & 0x300) == 0x100) {
             t = get_texture(d);
-            if (!t)
+            if (!t) {
+                stat_skipped++;
                 continue;
+            }
         }
         items[m].d = d;
         items[m].t = t;
@@ -464,16 +482,26 @@ static void render_page(int page, int shot)
     pvr_wait_ready();
     tc = timer_us_gettime64();
     t_wait += tc - tb;
-    if (shot) {
+    if (shot && !shot_tex) {
+        while (!(shot_tex = pool_alloc(640 * 480 * 2)))
+            if (!evict_one())
+                break;
+    }
+    if (shot && shot_tex) {
         pvr_scene_begin_rtt(shot_tex, 640, 480, 640);
     } else {
         pvr_scene_begin();
     }
     pvr_list_begin(PVR_LIST_OP_POLY);
-    if (n == 0)
+    if (n == 0) {
         draw_cpu_framebuffer(page);
-    else
+    } else {
+        if (cpu_fb_tex) {           /* ya no hace falta: devolver al bloque */
+            pool_free(cpu_fb_tex, 512 * 512 * 2);
+            cpu_fb_tex = NULL;
+        }
         submit_list(PVR_LIST_OP_POLY, m);
+    }
     pvr_list_finish();
     pvr_list_begin(PVR_LIST_PT_POLY);
     submit_list(PVR_LIST_PT_POLY, m);
@@ -495,6 +523,7 @@ static void dump_shot(void)
     for (y = 0; y < 120; y++) {
         char *o = line;
         o += sprintf(o, "SHOT %03d ", y);
+        (void)0;
         for (x = 0; x < 160; x++)
             o += sprintf(o, "%04X", p[(y * 4) * 640 + x * 4]);
         puts(line);
@@ -512,10 +541,6 @@ void pvrr_init(void)
     printf("VRAM libre para texturas: %u KB\n", (unsigned)(pvr_mem_available() / 1024));
     page_polys[0] = malloc(sizeof(packet) * MAX_POLYS);
     page_polys[1] = malloc(sizeof(packet) * MAX_POLYS);
-    cpu_fb_tex = pvr_mem_malloc(512 * 512 * 2);
-#ifdef CUSA_SHOT
-    shot_tex = pvr_mem_malloc(640 * 480 * 2);
-#endif
     pool_init();
     printf("texturas: bloque de %u KB\n", (1u << pool_size_order) / 1024);
     vu_poly_hook = on_poly;
@@ -533,14 +558,15 @@ void pvrr_frame(int shot)
     last_shown = shown;
     render_page(shown, shot);
     page_npolys[shown] = 0;
-    if (shot)
+    if (shot && shot_tex)
         dump_shot();
 }
 
 void pvrr_stats(unsigned *conv, unsigned *polys)
 {
-    printf("  render: texturas %u ms, espera %u ms, envio %u ms\n",
-           (unsigned)(t_tex / 1000), (unsigned)(t_wait / 1000), (unsigned)(t_sub / 1000));
+    printf("  render: texturas %u ms, espera %u ms, envio %u ms, omitidos %u\n",
+           (unsigned)(t_tex / 1000), (unsigned)(t_wait / 1000), (unsigned)(t_sub / 1000), stat_skipped);
+    stat_skipped = 0;
     t_tex = t_wait = t_sub = 0;
     *conv = stat_conv;
     *polys = stat_polys;

@@ -212,7 +212,9 @@ void rt_platform_event(void)
         return;
     frame_end += INSNS_PER_FRAME;
     frame++;
-#ifdef CUSA_SHOT
+#if defined(CUSA_SHOT) && defined(CUSA_SHOT_EVERY)
+    pvrr_frame(frame >= CUSA_SHOT && (frame - CUSA_SHOT) % CUSA_SHOT_EVERY == 0);
+#elif defined(CUSA_SHOT)
     pvrr_frame(frame == CUSA_SHOT);
 #else
     pvrr_frame(0);
