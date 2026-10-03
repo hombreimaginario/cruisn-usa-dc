@@ -65,6 +65,14 @@ static double ext_to_double(ext_t x)
     return ldexp(mant, x.e);
 }
 
+double c3x_reg_double(const c3x_state *cpu, int n)
+{
+    ext_t x;
+    x.e = cpu->exp[n];
+    x.m = cpu->r[n];
+    return ext_to_double(x);
+}
+
 /* Convierte a 40 bits truncando la fraccion. *ovf / *unf indican saturacion. */
 static ext_t ext_from_double(double d, int *ovf, int *unf)
 {
@@ -896,6 +904,10 @@ static void exec_par_store(c3x_state *cpu, uint32_t w)
 /* Saltos y control de flujo                                                 */
 /* ------------------------------------------------------------------------ */
 
+/* Destino de un salto por registro o RETS: la cobertura lo marca como
+ * entrada dinamica para que el recompilador cree una etiqueta ahi. */
+static uint32_t cov_dyn_target = 0xFFFFFFFFu;
+
 static void branch(c3x_state *cpu, uint32_t target, int delayed)
 {
     target &= 0xFFFFFF;
@@ -936,8 +948,11 @@ static void exec_flow(c3x_state *cpu, uint32_t w, uint32_t addr)
     case 0x1A: { /* Bcond */
         int rel = (w >> 25) & 1, d = (w >> 21) & 1;
         uint32_t tgt = rel ? addr + (d ? 3 : 1) + (int16_t)w : cpu->r[w & 0x1F];
-        if (cond_true(cpu, cond))
+        if (cond_true(cpu, cond)) {
             branch(cpu, tgt, d);
+            if (!rel)
+                cov_dyn_target = tgt & 0xFFFFFF;
+        }
         return;
     }
     case 0x1B: { /* DBcond */
@@ -957,6 +972,8 @@ static void exec_flow(c3x_state *cpu, uint32_t w, uint32_t addr)
         if (cond_true(cpu, cond)) {
             push(cpu, cpu->pc);
             cpu->pc = tgt & 0xFFFFFF;
+            if (!rel)
+                cov_dyn_target = cpu->pc;
         }
         return;
     }
@@ -979,8 +996,10 @@ static void exec_flow(c3x_state *cpu, uint32_t w, uint32_t addr)
             return;
         }
         if ((w >> 23) == 0xF1) { /* RETScond */
-            if (cond_true(cpu, cond))
+            if (cond_true(cpu, cond)) {
                 cpu->pc = pop(cpu) & 0xFFFFFF;
+                cov_dyn_target = cpu->pc;
+            }
             return;
         }
         break;
@@ -994,16 +1013,18 @@ static void exec_flow(c3x_state *cpu, uint32_t w, uint32_t addr)
 
 uint32_t c3x_pc_ring[64];
 unsigned c3x_pc_ring_pos;
-uint8_t *c3x_cov;          /* cobertura: 1 = ejecutada, 2 = destino de salto */
-static uint32_t cov_expected;
+uint8_t *c3x_cov;          /* cobertura: 1 = ejecutada, 2 = destino dinamico */
 
 void c3x_step(c3x_state *cpu)
 {
     uint32_t addr = cpu->pc;
     c3x_pc_ring[c3x_pc_ring_pos++ & 63] = addr;
     if (c3x_cov) {
-        c3x_cov[addr] |= (addr != cov_expected) ? 3 : 1;
-        cov_expected = addr + 1;
+        c3x_cov[addr] |= 1;
+        if (addr == cov_dyn_target) {
+            c3x_cov[addr] |= 2;
+            cov_dyn_target = 0xFFFFFFFFu;
+        }
     }
     uint32_t w = rd(addr);
     int pending_delay = cpu->delay_count;

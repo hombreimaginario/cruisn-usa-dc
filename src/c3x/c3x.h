@@ -58,6 +58,7 @@ void     c3x_mem_write(uint32_t addr, uint32_t value);
 void c3x_reset(c3x_state *cpu);
 void c3x_run(c3x_state *cpu, uint64_t until_cycle);
 void c3x_step(c3x_state *cpu);
+double c3x_reg_double(const c3x_state *cpu, int n);   /* valor flotante de R0-R7 */
 
 /* Depuracion: se llama a c3x_break_cb cada vez que el PC llega a c3x_break_pc. */
 extern uint32_t c3x_break_pc;

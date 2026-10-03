@@ -191,6 +191,8 @@ int main(int argc, char **argv)
     if (getenv("CUSA_PCHIST"))
         pc_hist = calloc(0x1000000, sizeof(uint32_t));
     vu_reset(program, gfx);
+    if (getenv("CUSA_SKIPTESTS"))
+        vu_skip_memtests();
     vu.trace_unmapped = getenv("CUSA_TRACE") != NULL;
     {
         size_t n = 0;

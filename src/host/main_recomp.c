@@ -1,0 +1,167 @@
+/*
+ * main_recomp.c - Ejecuta el codigo recompilado en el ordenador.
+ *
+ * Mismo uso y mismas variables de entorno (CUSA_INPUT, CUSA_ANALOG) que
+ * cusa_host, para poder comparar fotogramas con el interprete de referencia.
+ *
+ * Uso: cusa_recomp <dir_generated> [frames] [cada_n_frames] [dir_salida]
+ */
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <time.h>
+
+#include "../recomp/rt.h"
+
+#define INSNS_PER_FRAME (25000000 / 57)
+
+static const char *gdir, *outdir;
+static int frames, every, frame;
+static uint64_t frame_end = INSNS_PER_FRAME;
+static clock_t t_start;
+
+static uint64_t get_cycles(void) { return C.cycles; }
+static uint32_t get_pc(void) { return 0; }
+static void raise_irq(int bit)
+{
+    C.r[C3X_IF] |= 1u << bit;
+    C.next_event = 0;
+}
+
+static void *load_file(const char *dir, const char *name, size_t *size)
+{
+    char path[1024];
+    FILE *f;
+    void *buf;
+    long n;
+
+    snprintf(path, sizeof(path), "%s/%s", dir, name);
+    f = fopen(path, "rb");
+    if (!f)
+        return NULL;
+    fseek(f, 0, SEEK_END);
+    n = ftell(f);
+    fseek(f, 0, SEEK_SET);
+    buf = malloc((size_t)n);
+    if (!buf || fread(buf, 1, (size_t)n, f) != (size_t)n) {
+        fclose(f);
+        free(buf);
+        return NULL;
+    }
+    fclose(f);
+    if (size)
+        *size = (size_t)n;
+    return buf;
+}
+
+static void dump_ppm(int fr)
+{
+    static uint16_t rgb[512 * 400];
+    char path[1024];
+    FILE *f;
+    int i;
+
+    vu_video_to_rgb565(rgb, 512, vu.page_control & 1);
+    snprintf(path, sizeof(path), "%s/frame_%05d.ppm", outdir, fr);
+    f = fopen(path, "wb");
+    if (!f)
+        return;
+    fprintf(f, "P6\n512 400\n255\n");
+    for (i = 0; i < 512 * 400; i++) {
+        uint16_t c = rgb[i];
+        unsigned char p[3];
+        p[0] = (unsigned char)(((c >> 11) & 0x1F) << 3);
+        p[1] = (unsigned char)(((c >> 5) & 0x3F) << 2);
+        p[2] = (unsigned char)((c & 0x1F) << 3);
+        fwrite(p, 1, 3, f);
+    }
+    fclose(f);
+}
+
+static void apply_inputs(int fr)
+{
+    const char *p = getenv("CUSA_INPUT");
+    vu.in.switches = 0;
+    while (p && *p) {
+        int f0 = 0, dur = 0;
+        unsigned bits = 0;
+        if (sscanf(p, "%d:%x:%d", &f0, &bits, &dur) == 3 && fr >= f0 && fr < f0 + dur)
+            vu.in.switches |= bits;
+        p = strchr(p, ',');
+        if (p)
+            p++;
+    }
+    p = getenv("CUSA_ANALOG");
+    while (p && *p) {
+        int f0 = 0;
+        unsigned w = 0, g = 0, b = 0;
+        if (sscanf(p, "%d:%x:%x:%x", &f0, &w, &g, &b) == 4 && fr >= f0) {
+            vu.in.wheel = (uint8_t)w;
+            vu.in.gas = (uint8_t)g;
+            vu.in.brake = (uint8_t)b;
+        }
+        p = strchr(p, ',');
+        if (p)
+            p++;
+    }
+}
+
+void rt_platform_event(void)
+{
+    vu_tick();
+    if (C.cycles < frame_end)
+        return;
+    frame++;
+    frame_end += INSNS_PER_FRAME;
+    if (every > 0 && frame % every == 0) {
+        printf("frame %d: sp=%06X polis=%u pagina=%u  (%.1f s)\n", frame,
+               (unsigned)C.r[C3X_SP], (unsigned)vu.polys_frame,
+               (unsigned)(vu.page_control & 1),
+               (double)(clock() - t_start) / CLOCKS_PER_SEC);
+        dump_ppm(frame);
+    }
+    vu.polys_frame = 0;
+    if (frame >= frames) {
+        printf("%d frames en %.2f s\n", frames, (double)(clock() - t_start) / CLOCKS_PER_SEC);
+        exit(0);
+    }
+    apply_inputs(frame);
+    raise_irq(0);
+}
+
+int main(int argc, char **argv)
+{
+    uint32_t *program, *gfx, *cm;
+    size_t n = 0;
+
+    if (argc < 2) {
+        fprintf(stderr, "uso: %s <dir_generated> [frames] [cada_n_frames] [dir_salida]\n", argv[0]);
+        return 1;
+    }
+    gdir = argv[1];
+    frames = argc > 2 ? atoi(argv[2]) : 600;
+    every = argc > 3 ? atoi(argv[3]) : 60;
+    outdir = argc > 4 ? argv[4] : ".";
+
+    program = load_file(gdir, "program.bin", NULL);
+    gfx = load_file(gdir, "gfx.bin", NULL);
+    if (!program) {
+        fprintf(stderr, "no se puede leer %s/program.bin\n", gdir);
+        return 1;
+    }
+    vu_get_cycles = get_cycles;
+    vu_get_pc = get_pc;
+    vu_raise_irq = raise_irq;
+    vu_reset(program, gfx);
+    vu_skip_memtests();
+    cm = load_file(gdir, "cmos.bin", &n);
+    if (cm && n == sizeof(vu.cmos))
+        memcpy(vu.cmos, cm, n);
+    free(cm);
+
+    rt_reset();
+    apply_inputs(0);
+    t_start = clock();
+    rt_run();
+    return 0;
+}

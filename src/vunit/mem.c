@@ -12,7 +12,12 @@
 #include "../c3x/c3x.h"
 #include "mem.h"
 
+#ifdef VU_SWAPPABLE
+static vunit_mem vu_storage;
+vunit_mem *vu_cur = &vu_storage;
+#else
 vunit_mem vu;
+#endif
 
 static uint64_t no_cycles(void) { return 0; }
 static uint32_t no_pc(void) { return 0; }
@@ -78,6 +83,26 @@ void vu_reset(const uint32_t *program, const uint32_t *gfx)
     vu.in.wheel = 0x80;
     vu.in.dipsw = 0xFFFFFFFFu;
     memset(unmapped_log, 0, sizeof(unmapped_log));
+}
+
+/* Los tests de memoria del arranque copian codigo a la RAM interna del C31 y
+ * tardan ~8 s de juego. En la version recompilada (y en Dreamcast) se saltan
+ * sustituyendo sus CALL por NOP. Devuelve el numero de parches aplicados. */
+int vu_skip_memtests(void)
+{
+    static const struct { uint32_t addr, word; } calls[] = {
+        { 0x004AFF, 0x620062D5u },   /* CALL TEST_STATIC_CHIPS */
+        { 0x004B17, 0x62006381u },   /* CALL TEST_CHIPS */
+    };
+    unsigned i;
+    int n = 0;
+    for (i = 0; i < sizeof(calls) / sizeof(calls[0]); i++) {
+        if (vu.fastram[calls[i].addr] == calls[i].word) {
+            vu.fastram[calls[i].addr] = 0x0C800000u;   /* NOP */
+            n++;
+        }
+    }
+    return n;
 }
 
 /* ---- perifericos internos del C31 (temporizadores) ---- */

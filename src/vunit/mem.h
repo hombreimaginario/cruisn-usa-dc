@@ -70,7 +70,13 @@ typedef struct {
     int      trace_unmapped;
 } vunit_mem;
 
+#ifdef VU_SWAPPABLE
+/* Pruebas diferenciales: la memoria se puede intercambiar entre copias. */
+extern vunit_mem *vu_cur;
+#define vu (*vu_cur)
+#else
 extern vunit_mem vu;
+#endif
 extern uint32_t vu_watch_addr;   /* depuracion: traza escrituras */
 
 /* Ciclo actual de la CPU y PC para temporizadores y depuracion. */
@@ -83,6 +89,7 @@ extern void     (*vu_raise_irq)(int bit);
 extern uint32_t (*vu_gfx_fetch)(uint32_t word_index);
 
 void vu_reset(const uint32_t *program, const uint32_t *gfx);
+int  vu_skip_memtests(void);
 void vu_tick(void);                       /* llamar cada ~1000 instrucciones */
 void vu_report_unmapped(void);
 
