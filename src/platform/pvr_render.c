@@ -204,18 +204,30 @@ static int convert(tex_entry *t, const tex_req *r, uint32_t pixdata)
     uint32_t x, y, n = t->w * t->h;
     uint16_t *o = conv_buf;
 
+    uint16_t lut[256];
+    uint32_t i;
+
+    /* tabla de los 256 valores de texel ya en ARGB1555 */
+    for (i = 0; i < 256; i++) {
+        if (r->nzr)
+            lut[i] = i ? argb1555(nzr_col, 1) : argb1555(0, !r->zs);
+        else if (r->zs && i == 0)
+            lut[i] = 0;
+        else
+            lut[i] = argb1555(cram[i], 1);
+    }
     for (y = 0; y < t->h; y++) {
-        uint32_t row = (r->base * 256 + ((r->v0 + y) & 0xFF) * 256) & (sizeof(vu.texram) - 1);
-        for (x = 0; x < t->w; x++) {
-            uint8_t texel = src[row + ((r->u0 + x) & 0xFF)];
-            uint16_t c;
-            if (r->nzr)
-                c = texel ? argb1555(nzr_col, 1) : argb1555(0, !r->zs);
-            else if (r->zs && texel == 0)
-                c = 0;
-            else
-                c = argb1555(cram[texel], 1);
-            *o++ = c;
+        const uint8_t *row = src + ((r->base * 256 + ((r->v0 + y) & 0xFF) * 256) & (sizeof(vu.texram) - 1));
+        if (r->u0 + t->w <= 256) {
+            const uint8_t *p = row + r->u0;
+            for (x = 0; x < t->w; x += 4) {
+                o[0] = lut[p[0]]; o[1] = lut[p[1]];
+                o[2] = lut[p[2]]; o[3] = lut[p[3]];
+                o += 4; p += 4;
+            }
+        } else {
+            for (x = 0; x < t->w; x++)
+                *o++ = lut[row[(r->u0 + x) & 0xFF]];
         }
     }
     if (!t->ptr) {
