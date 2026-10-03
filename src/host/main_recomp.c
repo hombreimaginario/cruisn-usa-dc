@@ -20,6 +20,16 @@ static int frames, every, frame;
 static uint64_t frame_end = INSNS_PER_FRAME;
 static clock_t t_start;
 
+/* CUSA_SOUNDLOG: decodifica el protocolo del puerto de sonido (bytes con
+ * estrobo 0xFDxx) y registra los codigos de 16 bits enviados. */
+static void sound_hook(uint32_t v)
+{
+    if (v & 0x100)
+        printf("SND frame %d reset %u\n", frame, (unsigned)(v & 1));
+    else
+        printf("SND frame %d byte %02X\n", frame, (unsigned)v);
+}
+
 static unsigned poly_ctrl_hist[256], poly_base_max, poly_pal_max;
 static void stats_hook(const uint32_t *d, int page)
 {
@@ -255,6 +265,8 @@ int main(int argc, char **argv)
 
     if (getenv("CUSA_POLYSTATS"))
         vu_poly_hook = stats_hook;
+    if (getenv("CUSA_SOUNDLOG"))
+        vu_sound_hook = sound_hook;
     rt_reset();
 #ifdef RT_TRACE_ON
     prof_cycles = calloc(0x1000000, sizeof(uint64_t));

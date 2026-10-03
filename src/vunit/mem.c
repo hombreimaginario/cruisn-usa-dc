@@ -162,6 +162,7 @@ static uint32_t dma_read(uint32_t off)
 }
 
 void (*vu_fifo_reset_hook)(void);
+void (*vu_sound_hook)(uint32_t value);
 
 static void dma_write(uint32_t off, uint32_t v)
 {
@@ -209,9 +210,17 @@ static void io_write(uint32_t addr, uint32_t v)
         return;
     }
     case 0x994000:
+        /* bit 1: linea de reset de la placa DCS (0 = en reset) */
+        if (((vu.syscntl ^ v) & 2) && vu_sound_hook)
+            vu_sound_hook(0x100 | ((v >> 1) & 1));
         vu.syscntl = v;
         return;
-    case 0x995000:          /* puerto de sonido: pendiente (fase 4) */
+    case 0x995000:          /* placa del volante (motor de fuerza): ignorado */
+        return;
+    case 0x9A0000:          /* datos para la placa de sonido DCS (un byte) */
+        if (vu_sound_hook)
+            vu_sound_hook(v & 0xFF);
+        return;
     case 0x995020:          /* proteccion de escritura de CMOS */
     case 0x996000:          /* salida de luces / IDE */
     case 0x991000:

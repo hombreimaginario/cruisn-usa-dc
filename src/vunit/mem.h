@@ -103,6 +103,7 @@ void vu_report_unmapped(void);
  * rasterizador por software (page = pagina de destino). */
 extern void (*vu_poly_hook)(const uint32_t *pkt, int page);
 extern void (*vu_fifo_reset_hook)(void);   /* escritura en FIFO_CONTROL */
+extern void (*vu_sound_hook)(uint32_t value); /* escrituras en el puerto de sonido */
 void vu_dma_process(void);
 void vu_video_to_rgb565(uint16_t *dst, int pitch, int page);
 
