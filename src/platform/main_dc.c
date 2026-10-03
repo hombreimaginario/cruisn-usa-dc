@@ -344,12 +344,30 @@ void rt_platform_event(void)
 #define VBL_US 17544                    /* 1/57 s */
 static uint64_t next_vbl_us;
 
+/*
+ * Como mucho NFRAMES_MAX interrupciones por frame del juego (el arcade va a
+ * 2 en las escenas cargadas). Con mas, cada frame mueve los coches mas
+ * distancia y los choques de frente o contra conos se pueden saltar. Si el
+ * SH-4 no llega, la interrupcion que sobra espera a que el juego termine su
+ * frame: el juego va algo mas lento en vez de saltarse colisiones. Con 2 el
+ * juego iba al 55-90 % de velocidad en carretera; con 3 va casi siempre a
+ * tiempo real (en la carrera de prueba, 22-28 imagenes por segundo).
+ */
+#define NFRAMES_MAX 3
+static int vbl_since_flip, last_flip_page = -1;
+
 static void vblank_due(uint64_t now)
 {
     next_vbl_us += VBL_US;
-    if (now > next_vbl_us + 4 * VBL_US)
-        next_vbl_us = now + VBL_US;     /* muy atrasados: no acumular */
+    if (now > next_vbl_us)
+        next_vbl_us = now + VBL_US;     /* atrasados: no acumular */
     vblank();
+    if ((vu.page_control & 1) != last_flip_page) {
+        last_flip_page = vu.page_control & 1;
+        vbl_since_flip = 0;
+    } else {
+        vbl_since_flip++;
+    }
 }
 
 void rt_platform_idle(void)
@@ -381,8 +399,13 @@ void rt_platform_event(void)
     now = timer_us_gettime64();
     if (!next_vbl_us)
         next_vbl_us = now + VBL_US;
-    if (now >= next_vbl_us)
-        vblank_due(now);
+    if (now < next_vbl_us)
+        return;
+    /* con el juego ocupado, la ultima interrupcion permitida se guarda hasta
+     * que espere (salvo que lleve mucho sin esperar: bucles no detectados) */
+    if (vbl_since_flip >= NFRAMES_MAX - 1 && now < next_vbl_us + 4 * VBL_US)
+        return;
+    vblank_due(now);
 }
 #endif
 #endif
