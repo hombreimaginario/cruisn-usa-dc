@@ -127,6 +127,27 @@ static void read_inputs(void)
     vu.in.wheel = (uint8_t)(0x80 + st->joyx);   /* joyx: -128..127 */
     vu.in.gas = (uint8_t)st->rtrig;
     vu.in.brake = (uint8_t)st->ltrig;
+#ifdef CUSA_AUTOPLAY
+    {
+        /* Prueba sin mando: moneda, START y una carrera acelerando (igual que
+         * el guion CUSA_INPUT/CUSA_ANALOG del ordenador). */
+        extern int cusa_frame;
+        int f = cusa_frame;
+        sw = gears[gear];
+        if (f == 1200 || f == 1220 || f == 1240)
+            sw |= SW_COIN1;
+        if (f >= 1300 && f <= 2300 && (f - 1300) % 200 < 5)
+            sw |= SW_START;
+        vu.in.switches = sw;
+        vu.in.wheel = 0x80;
+        vu.in.gas = f >= 2400 ? 0xE0 : 0;
+        vu.in.brake = 0;
+        if (f >= 3000 && f < 3200)
+            vu.in.wheel = 0x40;
+        else if (f >= 3200 && f < 3400)
+            vu.in.wheel = 0xC0;
+    }
+#endif
 }
 
 /* ---- video ---- */
@@ -191,6 +212,7 @@ static void prof_report(void)
 #include "../recomp/rt.h"
 
 static int frame;
+int cusa_frame;
 static uint64_t t0;
 #if defined(CUSA_FIXED_CYCLES) || defined(CUSA_NO_THROTTLE)
 static uint64_t frame_end = INSNS_PER_FRAME;
@@ -207,7 +229,7 @@ static void rc_irq(int bit)
 /* Lo que pasa en cada interrupcion de video (INT0, 57 por segundo) */
 static void vblank(void)
 {
-    frame++;
+    cusa_frame = ++frame;
 #if defined(CUSA_SHOT) && defined(CUSA_SHOT_EVERY)
     pvrr_frame(frame >= CUSA_SHOT && (frame - CUSA_SHOT) % CUSA_SHOT_EVERY == 0);
 #elif defined(CUSA_SHOT)
