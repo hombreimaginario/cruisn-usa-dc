@@ -159,11 +159,11 @@ static uint32_t frame_no;
 static uint16_t conv_buf[256 * 256] __attribute__((aligned(32)));
 static pvr_ptr_t cpu_fb_tex, shot_tex;
 
-static unsigned stat_conv, stat_polys, stat_skipped, stat_pages;
+static unsigned stat_conv, stat_polys, stat_skipped, stat_pages, stat_why[4];
 static uint64_t t_tex, t_wait, t_sub;
 static unsigned conv_this_frame;
 #define MAX_CONV_PER_FRAME 400
-#define MAX_TEXELS_PER_FRAME (192 * 1024)
+#define MAX_TEXELS_PER_FRAME (1024 * 1024)
 static uint32_t texels_this_frame;
 
 static inline uint16_t argb1555(uint16_t c, int opaque)
@@ -327,8 +327,10 @@ static tex_entry *get_texture_slow(const uint32_t *d)
             break;
         }
     }
-    if (k == TEX_SLOTS)
+    if (k == TEX_SLOTS) {
+        stat_why[0]++;
         return NULL;
+    }
     if (t->blk_sum != g || t->pal_gen != pg || !t->ptr) {
         uint32_t pixdata = (d[1] & 0xFF00) | (d[0] & 0xFF);
         /* limite de conversiones por frame: se reutiliza la version anterior */
@@ -338,6 +340,7 @@ static tex_entry *get_texture_slow(const uint32_t *d)
         }
         if (conv_this_frame >= MAX_CONV_PER_FRAME || texels_this_frame >= MAX_TEXELS_PER_FRAME ||
             !convert(t, &r, pixdata)) {
+            stat_why[conv_this_frame >= MAX_CONV_PER_FRAME ? 1 : texels_this_frame >= MAX_TEXELS_PER_FRAME ? 2 : 3]++;
             if (!t->ptr)
                 t->key = 0;
             return NULL;
@@ -496,8 +499,11 @@ static void draw_cpu_framebuffer(int page)
 }
 
 
-static void render_page(int page, int shot)
+static int hold_frames;
+
+static int render_page(int page, int shot)
 {
+    unsigned skipped_now = 0;
     int n = page_npolys[page], i, m = 0, n_op = 0, n_pt = 0;
 
     uint64_t ta = timer_us_gettime64(), tb, tc;
@@ -518,6 +524,7 @@ static void render_page(int page, int shot)
                 t = get_texture(d);
                 if (!t) {
                     stat_skipped++;
+                    skipped_now++;
                     continue;
                 }
                 l = t->pt;
@@ -549,6 +556,15 @@ static void render_page(int page, int shot)
     tb = timer_us_gettime64();
     t_tex += tb - ta;
 
+    /* Si faltan texturas (al empezar una escena se convierten muchas y hay
+     * un limite por frame), se deja en pantalla la imagen anterior en vez de
+     * mostrar trozos; como mucho unos 30 frames seguidos. */
+    if (skipped_now && hold_frames < 30) {
+        hold_frames++;
+        return 0;
+    }
+    hold_frames = 0;
+
     pvr_wait_ready();
     tc = timer_us_gettime64();
     t_wait += tc - tb;
@@ -578,6 +594,7 @@ static void render_page(int page, int shot)
     pvr_list_finish();
     pvr_scene_finish();
     t_sub += timer_us_gettime64() - tc;
+    return 1;
 }
 
 /* Imprime la imagen reducida a 160x120 por el puerto serie (depuracion). */
@@ -657,8 +674,12 @@ void pvrr_frame(int shot)
     shot = pending_shot;
     pending_shot = 0;
     last_shown = shown;
+    if (!render_page(shown, shot)) {
+        pending_shot = shot;            /* imagen retenida: capturar la siguiente */
+        page_npolys[shown] = 0;
+        return;
+    }
     stat_pages++;
-    render_page(shown, shot);
     page_npolys[shown] = 0;
     if (shot && shot_tex)
         dump_shot();
@@ -673,8 +694,10 @@ unsigned pvrr_pages(void)
 
 void pvrr_stats(unsigned *conv, unsigned *polys)
 {
-    printf("  render: texturas %u ms, espera %u ms, envio %u ms, omitidos %u\n",
-           (unsigned)(t_tex / 1000), (unsigned)(t_wait / 1000), (unsigned)(t_sub / 1000), stat_skipped);
+    printf("  render: texturas %u ms, espera %u ms, envio %u ms, omitidos %u (huecos %u, limite %u/%u, vram %u)\n",
+           (unsigned)(t_tex / 1000), (unsigned)(t_wait / 1000), (unsigned)(t_sub / 1000), stat_skipped,
+           stat_why[0], stat_why[1], stat_why[2], stat_why[3]);
+    memset(stat_why, 0, sizeof(stat_why));
     stat_skipped = 0;
     t_tex = t_wait = t_sub = 0;
     *conv = stat_conv;
