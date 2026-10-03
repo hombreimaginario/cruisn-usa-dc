@@ -53,16 +53,16 @@ typedef struct {
 /* ---- asignador "buddy" para texturas dentro de un bloque fijo de VRAM ----
  * pvr_mem_malloc es lento y se fragmenta con miles de texturas pequenas. */
 
-#define POOL_ORDER  22                  /* 4 MB */
-#define MIN_ORDER   7                   /* bloques de 128 bytes */
+#define POOL_ORDER  23                  /* hasta 8 MB */
+#define MIN_ORDER   8                   /* bloques de 256 bytes */
 #define NBLK        (1 << (POOL_ORDER - MIN_ORDER))
 #define NORD        (POOL_ORDER - MIN_ORDER + 1)
 
 static uint8_t *pool;
+static uint32_t pool_bytes;
 static int16_t fl_next[NBLK], fl_prev[NBLK];
 static int16_t fl_head[NORD];
 static int8_t blk_free_ord[NBLK];       /* orden si esta libre y es cabeza, -1 si no */
-static uint32_t pool_size_order = POOL_ORDER;
 
 static void fl_push(int ord, int b)
 {
@@ -82,18 +82,27 @@ static void fl_remove(int ord, int b)
     blk_free_ord[b] = -1;
 }
 
+/* El bloque no tiene por que ser potencia de 2: se reparte en trozos
+ * alineados (los buddies fuera del rango nunca estan libres). */
 static void pool_init(void)
 {
-    int i;
+    int i, b = 0;
     uint32_t avail = (uint32_t)pvr_mem_available();
-    while ((1u << pool_size_order) > avail - 64 * 1024 && pool_size_order > 18)
-        pool_size_order--;
-    pool = pvr_mem_malloc(1u << pool_size_order);
+    pool_bytes = (avail - 64 * 1024) & ~((1u << MIN_ORDER) - 1);
+    if (pool_bytes > (1u << POOL_ORDER))
+        pool_bytes = 1u << POOL_ORDER;
+    pool = pvr_mem_malloc(pool_bytes);
     for (i = 0; i < NORD; i++)
         fl_head[i] = -1;
     for (i = 0; i < NBLK; i++)
         blk_free_ord[i] = -1;
-    fl_push((int)pool_size_order - MIN_ORDER, 0);
+    for (i = NORD - 1; i >= 0; i--) {
+        uint32_t nblk = pool_bytes >> MIN_ORDER;
+        while ((uint32_t)b + (1u << i) <= nblk && (b & ((1 << i) - 1)) == 0) {
+            fl_push(i, b);
+            b += 1 << i;
+        }
+    }
 }
 
 static int order_for(uint32_t bytes)
@@ -124,9 +133,9 @@ static void pool_free(void *p, uint32_t bytes)
 {
     int o = order_for(bytes);
     int b = (int)(((uint8_t *)p - pool) >> MIN_ORDER);
-    while (o < (int)pool_size_order - MIN_ORDER) {
+    while (o < NORD - 1) {
         int buddy = b ^ (1 << o);
-        if (blk_free_ord[buddy] != o)
+        if (buddy >= (int)(pool_bytes >> MIN_ORDER) || blk_free_ord[buddy] != o)
             break;
         fl_remove(o, buddy);
         b &= ~(1 << o);
@@ -533,8 +542,8 @@ static void dump_shot(void)
 void pvrr_init(void)
 {
     pvr_init_params_t params = {
-        { PVR_BINSIZE_16, PVR_BINSIZE_0, PVR_BINSIZE_16, PVR_BINSIZE_0, PVR_BINSIZE_16 },
-        1024 * 1024, 0, 0, 0, 3, 0
+        { PVR_BINSIZE_16, PVR_BINSIZE_0, PVR_BINSIZE_0, PVR_BINSIZE_0, PVR_BINSIZE_16 },
+        512 * 1024, 0, 0, 0, 3, 0
     };
     pvr_init(&params);
     pvr_set_bg_color(0.0f, 0.0f, 0.0f);
@@ -542,7 +551,7 @@ void pvrr_init(void)
     page_polys[0] = malloc(sizeof(packet) * MAX_POLYS);
     page_polys[1] = malloc(sizeof(packet) * MAX_POLYS);
     pool_init();
-    printf("texturas: bloque de %u KB\n", (1u << pool_size_order) / 1024);
+    printf("texturas: bloque de %u KB\n", (unsigned)(pool_bytes / 1024));
     vu_poly_hook = on_poly;
     vu_fifo_reset_hook = on_fifo_reset;
 }

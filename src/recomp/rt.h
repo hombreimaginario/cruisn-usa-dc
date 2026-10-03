@@ -65,7 +65,7 @@ void rt_platform_event(void);
  * evento que pueda despertar al juego (normalmente el fin de frame). */
 void rt_platform_idle(void);
 void rt_idle(void);
-#define RT_EVENT_PERIOD 500u
+#define RT_EVENT_PERIOD 2000u
 
 #ifndef LIKELY
 #define LIKELY(x)   __builtin_expect(!!(x), 1)
