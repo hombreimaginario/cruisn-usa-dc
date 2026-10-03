@@ -286,6 +286,7 @@ uint32_t hle_lzw_segment(void);
 void     hle_vtx_dirq(void);
 void     hle_vtx_model(void);
 void     hle_vtx_world(void);
+void     hle_vtx_race(void);
 uint32_t hle_poly_emit(void);
 uint32_t hle_poly_emit_pal(void);
 uint32_t hle_poly_emit_quad(void);

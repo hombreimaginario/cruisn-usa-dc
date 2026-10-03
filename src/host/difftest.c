@@ -291,6 +291,35 @@ static void test_function(uint32_t entry)
     cpu.r[C3X_ST] = (cpu.r[C3X_ST] & ~C3X_ST_GIE) | (cpu_gie_before & C3X_ST_GIE);
 }
 
+/* Mismos guiones de entrada que cusa_host (CUSA_INPUT, CUSA_ANALOG) */
+static void apply_inputs(int frame)
+{
+    const char *p = getenv("CUSA_INPUT");
+    vu.in.switches = 0;
+    while (p && *p) {
+        int f = 0, dur = 0;
+        unsigned bits = 0;
+        if (sscanf(p, "%d:%x:%d", &f, &bits, &dur) == 3 && frame >= f && frame < f + dur)
+            vu.in.switches |= bits;
+        p = strchr(p, ',');
+        if (p)
+            p++;
+    }
+    p = getenv("CUSA_ANALOG");
+    while (p && *p) {
+        int f = 0;
+        unsigned w = 0, g = 0, b = 0;
+        if (sscanf(p, "%d:%x:%x:%x", &f, &w, &g, &b) == 4 && frame >= f) {
+            vu.in.wheel = (uint8_t)w;
+            vu.in.gas = (uint8_t)g;
+            vu.in.brake = (uint8_t)b;
+        }
+        p = strchr(p, ',');
+        if (p)
+            p++;
+    }
+}
+
 int main(int argc, char **argv)
 {
     int from_frame;
@@ -338,6 +367,7 @@ int main(int argc, char **argv)
     for (frame = 0; frame < frames; frame++) {
         uint64_t end = (uint64_t)(frame + 1) * INSNS_PER_FRAME;
         uint64_t next_tick = cpu.cycles + 500;
+        apply_inputs(frame);
         while (cpu.cycles < end) {
             uint32_t pc = cpu.pc;
             if (frame >= from_frame && pc < VU_FASTRAM_WORDS && is_start[pc] && tested[pc] < per_func &&

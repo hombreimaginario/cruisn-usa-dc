@@ -378,6 +378,67 @@ void hle_vtx_world(void)
 }
 
 /*
+ * Bucle RPTB 0x01A1-0x01BA: vertices del decorado en carrera. Solo gira en
+ * el plano XZ: X = m1*z + (t0 + m0*x), Z = m3*z + (t2 + m2*x), Y = y + t1,
+ * con *AR5 = m0..m3 y *AR6 = t1 (t0 en AR6-1, t2 en AR6+1). Proyecta con
+ * INVTAB y guarda X, Y de pantalla y Z como en 0x0141.
+ */
+void hle_vtx_race(void)
+{
+    uint32_t *r = C.r;
+    float R6 = getf(6), R0 = 0, R1 = 0, R2 = 0, R3 = 0, R7 = 0;
+    uint32_t ar1 = r[AR1], ar2 = r[AR2], ar3 = r[AR3], ar5 = r[AR5], ar6 = r[AR6];
+    uint32_t bk = r[BK], ir1 = r[IR1];
+    int32_t n = (int32_t)r[RC_];
+    uint32_t iters = (uint32_t)(n + 1), k;
+    const uint32_t *src = mem_ptr(ar1, iters * 2);
+    const float *inv = inv_table(ar2);
+    float m0 = MF(ar5), m1 = MF(ar5 + 1), m2 = MF(ar5 + 2), m3 = MF(ar5 + 3);
+    float t0 = MF(ar6 - 1), t1 = MF(ar6), t2 = MF(ar6 + 1);
+    float y0 = MF(((r[DP] & 0xFF) << 16) | 0x54);
+    int sh = (int32_t)(bk << 25) >> 25;
+
+    for (k = 0; k < iters; k++) {
+        uint32_t w0 = src ? src[2 * k] : RD(ar1 + 2 * k);
+        uint32_t w1 = src ? src[2 * k + 1] : RD(ar1 + 2 * k + 1);
+        float x, y, z, X, Z, inv_z;
+        int32_t iz;
+
+        if (sh == -16) {
+            y = (float)((int32_t)w0 >> 16);
+            x = (float)((int32_t)(w0 << 16) >> 16);
+        } else {
+            y = (float)(int32_t)rt_shift(w0, bk, 1, 0);
+            x = (float)(int32_t)rt_shift(w0 << 16, bk, 1, 0);
+        }
+        z = (float)(int32_t)w1;
+        R2 = t0 + m0 * x;                                   /* 01A8-01A9 */
+        X = m1 * z + R2;                                    /* 01AA */
+        R3 = t2 + m2 * x;                                   /* 01AB-01AC */
+        Z = m3 * z + R3;                                    /* 01AD */
+        R7 = t1 + y;                                        /* 01AE */
+        iz = (int32_t)rt_fix(Z, 0) >> 4;                    /* 01AF-01B4 */
+        if (iz >= 4999) iz = 4999;
+        if (iz < -80) iz = -80;
+        inv_z = inv[iz];
+        R1 = X;
+        R0 = inv_z * X + R6;                                /* 01B5-01B6 */
+        WR(ar3, float_to_c3x(R0));
+        WR(ar3 + 2, float_to_c3x(Z));
+        R0 = (inv_z * R7) * 1.0400390625f + y0;             /* 01B7-01B9 */
+        WR(ar3 + 1, float_to_c3x(R0));
+        ar3 += 3;
+        ir1 = (uint32_t)iz;
+    }
+    setf(0, R0); setf(1, R1); setf(2, R2); setf(3, R3); setf(7, R7);
+    r[AR1] = ar1 + 2 * iters; r[AR3] = ar3; r[IR1] = ir1;
+    r[RC_] = 0xFFFFFFFFu;
+    C.r[C3X_ST] &= ~C3X_ST_RM;
+    FL_FLT(R0);
+    C.cyc += (iters - 1) * 26;  /* el bloque ya sumo una iteracion */
+}
+
+/*
  * Bucle RPTB 0x211D-0x2133: transformacion de vertices de modelo (mismo
  * empaquetado) mas traslacion; guarda X, Y, Z de camara.
  */
