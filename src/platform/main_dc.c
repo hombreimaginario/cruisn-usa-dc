@@ -166,10 +166,11 @@ static void prof_report(void)
 {
     int k;
     uint32_t total = 0, i;
+    timer_stop(TMU1);
     for (i = 0; i < PROF_BUCKETS; i++)
         total += prof_hist[i];
     printf("PERFIL %u muestras\n", (unsigned)total);
-    for (k = 0; k < 60; k++) {
+    for (k = 0; k < 400; k++) {
         uint32_t best = 0;
         for (i = 0; i < PROF_BUCKETS; i++)
             if (prof_hist[i] > prof_hist[best])

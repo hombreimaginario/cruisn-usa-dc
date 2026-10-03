@@ -39,7 +39,9 @@ IDLE_HINTS = {
 # Rutinas sustituidas por codigo nativo (src/recomp/hle.c): al llegar a la
 # direccion se llama a la funcion, que devuelve el siguiente PC.
 HLE_HOOKS = {
-    0x00A334: "hle_lzw_segment",     # COMP.ASM DECOMPRESS_TOPLP3
+    0x00A334: ("hle_lzw_segment", None),   # COMP.ASM DECOMPRESS_TOPLP3
+    0x000141: ("hle_vtx_dirq", 0x000163),  # DIRQ.ASM bucle de vertices
+    0x00211D: ("hle_vtx_model", 0x002134), # bucle de vertices de modelos
 }
 
 
@@ -456,8 +458,10 @@ class Gen:
         return self.region[0] <= a < self.region[1] and a in self.p.leaders
 
     def jump(self, target):
-        if self.in_region(target):
-            return "goto L_%06X;" % target
+        # Cada bloque es una funcion; los saltos son llamadas de cola
+        # garantizadas (musttail), asi que no crece la pila de C.
+        if target in self.p.leaders and target in self.p.code:
+            return "RT_TAIL return b_%06X();" % target
         return "return 0x%06XU;" % target
 
     def materialize(self):
@@ -548,6 +552,8 @@ class Gen:
                 return "vu.fastram[0x%05X]" % v
             if 0x809800 <= v < 0x80A000:
                 return "vu.c31ram[0x%03X]" % (v - 0x809800)
+            if 0xC00000 <= v < 0xC80000:
+                return "vu.program[0x%05X]" % (v - 0xC00000)
             return "c3x_mem_read(0x%06XU)" % v
         return "RD(%s)" % v
 
@@ -1223,29 +1229,38 @@ def liveness(prog, gen, blocks):
     return live_out
 
 
+BLOCK_DECLS = [
+    "    uint32_t fa0 = 0, fb0 = 0, fr0 = 0, fc0 = 0, fa1 = 0, fb1 = 0, fr1 = 0, fc1 = 0;",
+    "    int64_t fw0 = 0, fw1 = 0; float xa0 = 0, xb0 = 0, xr0 = 0, xa1 = 0, xb1 = 0, xr1 = 0;",
+    "    uint32_t t0 = 0, t1 = 0, t2 = 0, t3 = 0;",
+    "    uint32_t ea0 = 0, ea1 = 0, ea2 = 0, n = 0, tj = 0; int bc = 0;",
+    "    float x0 = 0, x1 = 0, x2 = 0, x3 = 0;",
+    "    (void)fa0; (void)fb0; (void)fr0; (void)fc0; (void)fa1; (void)fb1; (void)fr1; (void)fc1;",
+    "    (void)fw0; (void)fw1; (void)xa0; (void)xb0; (void)xr0; (void)xa1; (void)xb1; (void)xr1;",
+    "    (void)t0; (void)t1; (void)t2; (void)t3;",
+    "    (void)ea0; (void)ea1; (void)ea2; (void)n; (void)tj; (void)bc;",
+    "    (void)x0; (void)x1; (void)x2; (void)x3;",
+]
+
+
 def gen_region(prog, gen, rstart, rend, blocks, live_out, out):
     gen.out = out
     gen.region = (rstart, rend)
     leaders = sorted(a for a in blocks if rstart <= a < rend)
+    for a in leaders:
+        out.append("uint32_t b_%06X(void)" % a)
+        out.append("{")
+        out.extend(BLOCK_DECLS)
+        gen_block(prog, gen, a, blocks[a], live_out[a])
+        out.append("}")
+        out.append("")
     out.append("uint32_t rg_%06X(uint32_t entry)" % rstart)
     out.append("{")
-    out.append("    uint32_t fa0 = 0, fb0 = 0, fr0 = 0, fc0 = 0, fa1 = 0, fb1 = 0, fr1 = 0, fc1 = 0;")
-    out.append("    int64_t fw0 = 0, fw1 = 0; float xa0 = 0, xb0 = 0, xr0 = 0, xa1 = 0, xb1 = 0, xr1 = 0;")
-    out.append("    uint32_t t0 = 0, t1 = 0, t2 = 0, t3 = 0;")
-    out.append("    uint32_t ea0 = 0, ea1 = 0, ea2 = 0, n = 0, tj = 0; int bc = 0;")
-    out.append("    float x0 = 0, x1 = 0, x2 = 0, x3 = 0;")
-    out.append("    (void)fa0; (void)fb0; (void)fr0; (void)fc0; (void)fa1; (void)fb1; (void)fr1; (void)fc1;")
-    out.append("    (void)fw0; (void)fw1; (void)xa0; (void)xb0; (void)xr0; (void)xa1; (void)xb1; (void)xr1;")
-    out.append("    (void)t0; (void)t1; (void)t2; (void)t3;")
-    out.append("    (void)ea0; (void)ea1; (void)ea2; (void)n; (void)tj; (void)bc;")
-    out.append("    (void)x0; (void)x1; (void)x2; (void)x3;")
     out.append("    switch (entry) {")
     for a in leaders:
-        out.append("    case 0x%06X: goto L_%06X;" % (a, a))
+        out.append("    case 0x%06X: return b_%06X();" % (a, a))
     out.append("    default: return rt_unknown(entry);")
     out.append("    }")
-    for a in leaders:
-        gen_block(prog, gen, a, blocks[a], live_out[a])
     out.append("}")
     for k in range(len(out)):
         if out[k].startswith(MARK):
@@ -1260,7 +1275,13 @@ def gen_block(prog, gen, start, seq, live_out):
     gen.out.append("L_%06X:" % start)
     gen.emit("RT_TRACE(0x%06XU);" % start)
     if start in HLE_HOOKS:
-        gen.emit("return %s();" % HLE_HOOKS[start])
+        fn, cont = HLE_HOOKS[start]
+        if cont is None:
+            gen.emit("return %s();" % fn)
+        else:
+            gen.emit("C.cyc += %d;" % (len(seq) + (3 if seq[-1].delayed else 0)))
+            gen.emit("%s();" % fn)
+            gen.emit(gen.jump(cont))
         return
     if start == gen.region[0] or start in prog.backward_heads or start in prog.vectors:
         gen.emit("RT_CHECK(0x%06XU);" % start)
@@ -1503,7 +1524,7 @@ def gen_flow(prog, gen, i, slots, live_out, live_here):
         else:
             gen.emit("    PUSH(0x%06XU);" % ret)
             if i.target in prog.region_set:
-                gen.emit("    n = rg_%06X(0x%06XU);" % (i.target, i.target))
+                gen.emit("    n = b_%06X();" % i.target)
             else:
                 gen.emit("    n = rt_dispatch(0x%06XU);" % i.target)
         gen.emit("    if (n != 0x%06XU) return n;" % ret)
@@ -1584,6 +1605,8 @@ def main():
     decls = []
     for s, e in bounds:
         decls.append("uint32_t rg_%06X(uint32_t entry);" % s)
+    for s in sorted(blocks):
+        decls.append("uint32_t b_%06X(void);" % s)
     with open(os.path.join(a.outdir, "rc_decls.h"), "w") as f:
         f.write("\n".join(header[:1] + ["#include <stdint.h>"] + decls) + "\n")
 

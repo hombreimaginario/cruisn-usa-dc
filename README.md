@@ -4,7 +4,7 @@ Port en desarrollo del arcade **Cruis'n USA** (Midway, 1994) a **Sega Dreamcast*
 
 El juego original corre en un TMS320C31 sobre la placa Midway V-Unit. Este port traduce el código de la ROM a C (recompilación estática) y sustituye el hardware de vídeo y sonido por implementaciones nativas para el PowerVR y el AICA. Detalles en [docs/ANALISIS.md](docs/ANALISIS.md) y [docs/PLAN.md](docs/PLAN.md).
 
-**Estado:** el código del arcade ya arranca en el ordenador con el intérprete de referencia y llega al modo demo con los gráficos 3D correctos. Falta llevarlo a Dreamcast (render con PowerVR, recompilador para velocidad, sonido). Todavía no es jugable en consola.
+**Estado:** el código del arcade, recompilado a C, arranca en Dreamcast (probado en Flycast) y dibuja con el PowerVR. En el ordenador es jugable (intérprete y versión recompilada). En consola aún va 1-3 veces más lento que el original según la escena y no tiene sonido. Ver [docs/PLAN.md](docs/PLAN.md).
 
 ## Lo que necesitas
 
@@ -34,9 +34,14 @@ CUSA_INPUT="3100:10:10,3300:10:10,3500:10:10,3700:10:10,3900:10:10" \
 CUSA_ANALOG="3200:10:0:0,3400:f0:0:0,3600:80:f0:0,3800:80:0:f0,4000:80:0:0" \
 build/cusa_host generated 4200 0
 
-# 5. Compilar para Dreamcast
+# 5. Recompilar el codigo del juego a C (usa la cobertura del paso 4)
+CUSA_SKIPTESTS=1 CUSA_COVERAGE=generated/coverage.bin build/cusa_host generated 3000 0
+python3 tools/c31recomp.py generated/program.bin generated/recomp --coverage generated/coverage.bin
+make -f Makefile.host recomp difftest      # cusa_recomp y la prueba diferencial
+
+# 6. Compilar para Dreamcast e imagen de CD
 source $KOS_BASE/environ.sh
-make
+make && make cdi
 ```
 
 Para probar en consola o emulador, pon `program.bin` en la raíz del CD (`/cd/program.bin`) o sírvelo con dcload (`/pc/program.bin`).

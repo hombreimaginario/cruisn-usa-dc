@@ -173,6 +173,16 @@ void rt_platform_event(void)
     vu.polys_frame = 0;
     if (frame >= frames) {
         printf("%d frames en %.2f s (%lu esperas saltadas)\n", frames, (double)(clock() - t_start) / CLOCKS_PER_SEC, idle_calls);
+#ifdef RT_COUNT_SLOW
+        {
+            extern uint32_t rt_slow_count[2][256];
+            int k, rw;
+            for (rw = 0; rw < 2; rw++)
+                for (k = 0; k < 256; k++)
+                    if (rt_slow_count[rw][k] > 100000)
+                        printf("  %s %02X0000: %u\n", rw ? "W" : "R", k, (unsigned)rt_slow_count[rw][k]);
+        }
+#endif
 #ifdef RT_TRACE_ON
         if (prof_cycles)
             prof_report();

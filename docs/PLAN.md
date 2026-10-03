@@ -28,6 +28,13 @@ Alternativas descartadas:
 - [x] `tools/mame/`: comparación de registros con MAME en puntos de ruptura para depurar divergencias.
 - Hallazgo: la ROM gráfica empieza en `0xC80000` (justo tras el programa), no en `0xD00000`.
 
+### Estado (3 oct 2026)
+- [x] Recompilador funcionando: una funcion C por bloque con saltos de cola garantizados (`musttail`), flags perezosas, registros de 40 bits con vistas sincronizadas, validado bloque a bloque contra el interprete (`cusa_difftest`).
+- [x] HLE nativo: descompresor LZW de texturas y bucles de transformacion de vertices de DIRQ y de modelos.
+- [x] Render con PowerVR (`src/platform/pvr_render.c`).
+- [x] Dreamcast (Flycast): escenas con ~250 poligonos casi a tiempo real; escenas con ~2400 poligonos unas 3x mas lentas.
+- [ ] Siguiente: HLE de la emision de poligonos (0x0521-0x0550) y del otro bucle de vertices (0x0221), coche del jugador ausente en el render PVR, sonido, controles finos.
+
 ### Fase 1: Recompilador (`tools/c31recomp.py`)
 - Descubrimiento de código a partir de los vectores, `CALL`, saltos y tablas de punteros; símbolos tomados de la fuente (etiquetas de `DIRQ.ASM`, `MPROC.ASM`...).
 - Emisión de C por bloque básico sobre `c3x_state`, con:

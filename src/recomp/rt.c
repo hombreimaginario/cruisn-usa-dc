@@ -126,18 +126,33 @@ void rt_idle(void)
 
 /* ---- memoria ---- */
 
+#ifdef RT_COUNT_SLOW
+uint32_t rt_slow_count[2][256];
+#endif
+
 uint32_t rt_rd_slow(uint32_t a)
 {
+#ifdef RT_COUNT_SLOW
+    rt_slow_count[0][a >> 16]++;
+#endif
     if (a - VU_C31_RAM_BASE < VU_C31_RAM_WORDS)
         return vu.c31ram[a - VU_C31_RAM_BASE];
+    if (a - VU_PROGROM_BASE < VU_PROGRAM_WORDS && vu.program)
+        return vu.program[a - VU_PROGROM_BASE];   /* modelos 3D y tablas en ROM */
     return c3x_mem_read(a);
 }
 
 void rt_wr_slow(uint32_t a, uint32_t v)
 {
+#ifdef RT_COUNT_SLOW
+    rt_slow_count[1][a >> 16]++;
+#endif
     if (a - VU_C31_RAM_BASE < VU_C31_RAM_WORDS)
         vu.c31ram[a - VU_C31_RAM_BASE] = v;
-    else
+    else if ((a >> 20) == 6) {              /* FIFO de poligonos */
+        if (vu.fifo_count < 16)
+            vu.fifo[vu.fifo_count++] = v;
+    } else
         c3x_mem_write(a, v);
 }
 

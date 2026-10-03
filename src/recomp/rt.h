@@ -91,6 +91,7 @@ static inline void rt_set_cycles(uint64_t v)
 /* ---- memoria ---- */
 
 #define RT_INLINE static inline __attribute__((always_inline))
+#define RT_TAIL   __attribute__((musttail))
 
 /* Accesos rapidos en linea solo para la FASTRAM; el resto pasa por una
  * funcion pequena que atiende primero la RAM interna del C31 (pila y
@@ -278,6 +279,8 @@ static inline uint32_t rt_circ(uint32_t ar, int32_t step, uint32_t bk)
 
 uint32_t rt_bitrev(uint32_t ar, uint32_t ir);
 uint32_t hle_lzw_segment(void);
+void     hle_vtx_dirq(void);
+void     hle_vtx_model(void);
 float    rt_lde(float dst, float src);
 float    rt_ldm(float dst, float src);
 
