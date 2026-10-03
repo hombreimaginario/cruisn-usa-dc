@@ -3,6 +3,7 @@ name: build
 on:
   push:
   pull_request:
+  workflow_dispatch:
 
 jobs:
   host-tests:
@@ -14,7 +15,12 @@ jobs:
       - name: Comprobar herramientas Python
         run: python3 -m py_compile tools/*.py
 
+  # La imagen kazade/dreamcast-sdk trae una KallistiOS anterior a la que usa el
+  # port (pvr_scene_begin_rtt, pvr_dr_target sin estado, snd_sfx_play_ex con
+  # bucles, cabeceras de fs_vmu...), asi que este job solo se lanza a mano
+  # (Actions > build > Run workflow) hasta tener una imagen con KOS reciente.
   dreamcast:
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     container: kazade/dreamcast-sdk:latest
     steps:
