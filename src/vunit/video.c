@@ -86,6 +86,8 @@ static void draw_triangle(uint16_t *page, const vtx *a, const vtx *b, const vtx 
     }
 }
 
+void (*vu_poly_hook)(const uint32_t *pkt, int page);
+
 void vu_dma_process(void)
 {
     uint32_t *d = vu.fifo;
@@ -102,6 +104,10 @@ void vu_dma_process(void)
     }
     vu.fifo_count = 0;
     vu.polys_frame++;
+    if (vu_poly_hook) {
+        vu_poly_hook(d, (vu.page_control & 4) ? 1 : 0);
+        return;
+    }
 
     for (i = 0; i < 4; i++) {
         q[i].x = (float)(int16_t)d[2 + i * 2];

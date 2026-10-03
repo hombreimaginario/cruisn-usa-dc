@@ -35,7 +35,7 @@ static const rt_region *find_region(uint32_t pc)
 uint32_t rt_unknown(uint32_t pc)
 {
     fprintf(stderr, "rt: PC %06X sin codigo recompilado (ciclo %llu, sp %06X)\n",
-            (unsigned)pc, (unsigned long long)C.cycles, (unsigned)C.r[C3X_SP]);
+            (unsigned)pc, (unsigned long long)rt_cycles(), (unsigned)C.r[C3X_SP]);
     abort();
     return pc;
 }
@@ -55,7 +55,7 @@ uint32_t rt_call(uint32_t target, uint32_t ret)
 {
     uint32_t pc = target;
     while (pc != ret) {
-        if (UNLIKELY(C.cycles > rt_cycle_limit) && rt_limit_cb)
+        if (UNLIKELY(rt_cycles() > rt_cycle_limit) && rt_limit_cb)
             rt_limit_cb();
         pc = rt_dispatch(pc);
     }
@@ -70,16 +70,19 @@ uint32_t rt_service(uint32_t resume_pc)
     int bit;
 
     if (rt_irq_disabled) {
-        C.next_event = C.cycles + 1000;
-        if (C.cycles > rt_cycle_limit && rt_limit_cb)
+        C.next_ev = C.cyc + 1000;
+        if (rt_cycles() > rt_cycle_limit && rt_limit_cb)
             rt_limit_cb();
         return resume_pc;
     }
-    if (C.cycles >= next_periodic) {
-        next_periodic = C.cycles + RT_EVENT_PERIOD;
+    if (C.cyc < C.cyc_last)
+        C.cyc_hi++;
+    C.cyc_last = C.cyc;
+    if (rt_cycles() >= next_periodic) {
+        next_periodic = rt_cycles() + RT_EVENT_PERIOD;
         rt_platform_event();
     }
-    C.next_event = next_periodic;
+    C.next_ev = (uint32_t)next_periodic;
 
     if (!(C.r[C3X_ST] & C3X_ST_GIE))
         return resume_pc;
@@ -105,7 +108,7 @@ void rt_reset(void)
         C.rk[i] = 3;
     }
     next_periodic = RT_EVENT_PERIOD;
-    C.next_event = RT_EVENT_PERIOD;
+    C.next_ev = RT_EVENT_PERIOD;
 }
 
 void rt_run(void)
@@ -118,7 +121,24 @@ void rt_run(void)
 void rt_idle(void)
 {
     rt_platform_idle();
-    C.next_event = 0;
+    RT_FORCE_CHECK();
+}
+
+/* ---- memoria ---- */
+
+uint32_t rt_rd_slow(uint32_t a)
+{
+    if (a - VU_C31_RAM_BASE < VU_C31_RAM_WORDS)
+        return vu.c31ram[a - VU_C31_RAM_BASE];
+    return c3x_mem_read(a);
+}
+
+void rt_wr_slow(uint32_t a, uint32_t v)
+{
+    if (a - VU_C31_RAM_BASE < VU_C31_RAM_WORDS)
+        vu.c31ram[a - VU_C31_RAM_BASE] = v;
+    else
+        c3x_mem_write(a, v);
 }
 
 /* ---- operaciones poco frecuentes ---- */

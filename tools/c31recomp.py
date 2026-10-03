@@ -417,6 +417,24 @@ def fl_cmpf():
     return Flags("cmpf", FV | FZ | FN | FUF, "FL_FLT(xa - xb);", cmpf_conds("xa", "xb"))
 
 
+def const_shift(v, cnt, arith):
+    """Desplazamiento con contador constante (como rt_shift, sin ramas)."""
+    if cnt == 0:
+        return "fr = %s; fc = 0;" % v
+    if cnt > 0:
+        if cnt >= 32:
+            return "fr = 0; fc = %s;" % (("%s & 1u" % v) if cnt == 32 else "0")
+        return "t0 = %s; fr = t0 << %d; fc = (t0 >> %d) & 1u;" % (v, cnt, 32 - cnt)
+    n = -cnt
+    if n >= 32:
+        if arith:
+            return "t0 = %s; fr = (uint32_t)((int32_t)t0 >> 31); fc = t0 >> 31;" % v
+        return "t0 = %s; fr = 0; fc = %s;" % (v, "t0 >> 31" if n == 32 else "0")
+    if arith:
+        return "t0 = %s; fr = (uint32_t)((int32_t)t0 >> %d); fc = (t0 >> %d) & 1u;" % (v, n, n - 1)
+    return "t0 = %s; fr = t0 >> %d; fc = (t0 >> %d) & 1u;" % (v, n, n - 1)
+
+
 class Gen:
     def __init__(self, prog):
         self.p = prog
@@ -528,6 +546,8 @@ class Gen:
         if kind == "const":
             if v < CODE_END:
                 return "vu.fastram[0x%05X]" % v
+            if 0x809800 <= v < 0x80A000:
+                return "vu.c31ram[0x%03X]" % (v - 0x809800)
             return "c3x_mem_read(0x%06XU)" % v
         return "RD(%s)" % v
 
@@ -536,6 +556,8 @@ class Gen:
         if kind == "const":
             if v < CODE_END:
                 self.emit("vu.fastram[0x%05X] = %s;" % (v, val))
+            elif 0x809800 <= v < 0x80A000:
+                self.emit("vu.c31ram[0x%03X] = %s;" % (v - 0x809800, val))
             else:
                 self.emit("c3x_mem_write(0x%06XU, %s);" % (v, val))
         else:
@@ -631,7 +653,7 @@ class Gen:
 
     def after_write(self, n):
         if n in SPECIAL_WRITE:
-            self.emit("C.next_event = 0;")
+            self.emit("RT_FORCE_CHECK();")
         if n == R_DP:
             self.dp = None
 
@@ -678,7 +700,10 @@ class Gen:
             else:
                 self.set_r(d, "fr"); iflags(fl_logic())
         elif op in (0x07, 0x13):  # ASH LSH
-            self.emit("fr = rt_shift(%s, %s, %d, &fc);" % (self.ri(d), self.src_int(g, f), 1 if op == 0x07 else 0))
+            if g == 3:
+                self.emit(const_shift(self.ri(d), sext(f & 0x7F, 7), op == 0x07))
+            else:
+                self.emit("fr = rt_shift(%s, %s, %d, &fc);" % (self.ri(d), self.src_int(g, f), 1 if op == 0x07 else 0))
             self.set_r(d, "fr"); iflags(fl_shift())
         elif op == 0x08:  # CMPF
             self.emit("xb = %s; xa = %s;" % (self.src_flt(g, f), self.freg(d)))
@@ -693,7 +718,7 @@ class Gen:
             self.emit("xr = (float)(int32_t)%s;" % self.src_int(g, f))
             self.set_f(d, "xr"); iflags(fl_flt())
         elif op == 0x0C:  # IDLE
-            self.emit("ST |= 0x%XU; C.next_event = 0;" % ST_GIE)
+            self.emit("ST |= 0x%XU; RT_FORCE_CHECK();" % ST_GIE)
         elif op == 0x0D:  # LDE
             self.emit("xr = %s;" % self.src_flt(g, f))
             self.set_f(d, "rt_lde(%s, xr)" % self.freg(d))
@@ -906,7 +931,7 @@ class Gen:
                 self.known[d] = 2
                 self.rkset.pop(d, None)
             else:
-                self.emit("if (%s) { %s = t0;%s }" % (c, reg(d), " C.next_event = 0;" if d in SPECIAL_WRITE else ""))
+                self.emit("if (%s) { %s = t0;%s }" % (c, reg(d), " RT_FORCE_CHECK();" if d in SPECIAL_WRITE else ""))
         else:
             s = self.src_flt(g, f)
             self.emit("x0 = %s;" % s)
@@ -1241,7 +1266,7 @@ def gen_block(prog, gen, start, seq, live_out):
         gen.emit("RT_CHECK(0x%06XU);" % start)
     last = seq[-1]
     count = len(seq) + (3 if last.delayed else 0)
-    gen.emit("C.cycles += %d;" % count)
+    gen.emit("C.cyc += %d;" % count)
     if start in IDLE_HINTS:
         pre, cond = IDLE_HINTS[start]
         gen.emit("%s if (%s) rt_idle();" % (pre, cond))
@@ -1278,7 +1303,7 @@ def gen_block(prog, gen, start, seq, live_out):
             gen.materialize()
             gen.emit("C.r[%d] = %s; n = C.r[%d]; C.r[%d] = C.r[%d] = 0x%06XU;"
                      % (R_RC, cnt, R_RC, R_RS, R_RE, i.addr + 1))
-            gen.emit("C.cycles += n;")
+            gen.emit("C.cyc += n;")
             gen.emit("do {")
             gen.known = {}; gen.rkset = {}
             saved = gen.dp
@@ -1325,36 +1350,83 @@ def gen_rptb_end(prog, gen, addr, live_out):
     gen.emit("}")
 
 
-def is_pure(ins):
-    """Sin escrituras a memoria ni llamadas (solo lee y compara)."""
+MODIFYING_MODES = set(range(0x02, 0x08)) | set(range(0x0A, 0x10)) | set(range(0x12, 0x18)) | {0x19}
+
+
+def operand_regs(g, f, ind16=True):
+    """Registros que lee un operando y si el modo indirecto modifica un AR."""
+    if g == 0:
+        return {f & 0x1F}, False
+    if g == 2:
+        mod = (f >> 11) & 0x1F
+        regs = {8 + ((f >> 8) & 7)}
+        if 0x08 <= mod < 0x10 or mod == 0x19:
+            regs.add(R_IR0)
+        elif 0x10 <= mod < 0x18:
+            regs.add(R_IR1)
+        return regs, mod in MODIFYING_MODES
+    if g == 1:
+        return {R_DP}, False
+    return set(), False
+
+
+def loop_effects(ins):
+    """(lee, escribe) de una instruccion admisible en un bucle de espera, o None."""
     if not ins.valid or ins.kind != "op":
-        return False
+        return None
     w = ins.w
     top = w >> 29
     if top == 0:
         op = (w >> 23) & 0x3F
+        g = (w >> 21) & 3
         d = (w >> 16) & 0x1F
-        if op in (0x1C, 0x1D, 0x1E, 0x1F, 0x27, 0x28, 0x29, 0x2A, 0x2B, 0x0C, 0x36):
-            return False
-        return d not in (R_SP, R_ST, R_IE, R_IF)
-    if top in (1, 2):
-        return ((w >> 16) & 0x1F) not in (R_SP, R_ST, R_IE, R_IF)
-    return False
+        if d in (R_SP, R_ST, R_IE, R_IF, R_DP):
+            return None
+        src, modifies = operand_regs(g, w & 0xFFFF)
+        if modifies:
+            return None
+        if op in (0x10, 0x0E):                       # LDI LDF
+            return src, {d}
+        if op in (0x09, 0x08, 0x34):                 # CMPI CMPF TSTB
+            return src | {d}, set()
+        if op in (0x05, 0x20, 0x35, 0x06, 0x13) and g == 3:   # logicas/LSH con inmediato
+            return {d}, {d}
+        if op == 0x19 and g != 2:                    # NOP
+            return set(), set()
+        return None
+    if top == 1:
+        op = (w >> 23) & 0x3F
+        t = (w >> 21) & 3
+        d = (w >> 16) & 0x1F
+        if t != 0 or op not in (0x03, 0x07, 0x0F, 0x06):   # AND3 CMPI3 TSTB3 CMPF3 con registros
+            return None
+        src = {(w >> 8) & 0x1F, w & 0x1F}
+        return src, (set() if op in (0x07, 0x0F, 0x06) else {d})
+    return None
 
 
 def is_idle_loop(prog, br, slots):
-    """Bucle de espera: salta a su propio inicio y solo lee."""
+    """Bucle de espera: salta a su propio inicio, solo lee memoria sin mover
+    punteros y cada iteracion recalcula todo lo que escribe."""
     t = br.target
     if t is None or t > br.addr or br.addr - t > 8:
         return False
-    if not (t in prog.leaders):
+    if t not in prog.leaders:
         return False
-    for a in range(t, br.addr):
-        if not is_pure(prog.get(a)):
+    body = [prog.get(a) for a in range(t, br.addr)] + list(slots)
+    for a in range(t + 1, br.addr):
+        if a in prog.leaders:
             return False
-        if a != t and a in prog.leaders:
+    effs = [loop_effects(ins) for ins in body]
+    if any(e is None for e in effs):
+        return False
+    all_writes = set().union(*[e[1] for e in effs])
+    written = set()
+    for reads, writes in effs:
+        if (reads - written) & all_writes:
             return False
-    return all(is_pure(s) for s in slots)
+        written |= writes
+    return True
 
 
 def gen_flow(prog, gen, i, slots, live_out, live_here):
@@ -1444,7 +1516,7 @@ def gen_flow(prog, gen, i, slots, live_out, live_here):
         if k == "rets":
             body = "return POP() & 0xFFFFFFU;"
         else:
-            body = "{ t3 = POP() & 0xFFFFFFU; ST |= 0x%XU; C.next_event = 0; return t3; }" % ST_GIE
+            body = "{ t3 = POP() & 0xFFFFFFU; ST |= 0x%XU; RT_FORCE_CHECK(); return t3; }" % ST_GIE
         if i.cond == 0:
             gen.emit(body)
         else:

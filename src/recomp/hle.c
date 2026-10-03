@@ -166,9 +166,9 @@ out:
     C.r[C3X_ST] &= ~C3X_ST_RM;
     if (gie) {
         C.r[C3X_ST] |= C3X_ST_GIE;    /* PUTC termina con RETI (ENABLEGIE) */
-        C.next_event = 0;
+        RT_FORCE_CHECK();
     }
     /* Tiempo aproximado del original: ~40 ciclos por codigo */
-    C.cycles += work * 40;
+    C.cyc += (uint32_t)(work * 40);
     return next;
 }

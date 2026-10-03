@@ -42,7 +42,9 @@ typedef struct {
 
 typedef struct {
     uint32_t fastram[VU_FASTRAM_WORDS];
-    uint32_t ram2[VU_RAM2_WORDS];
+#ifndef VU_NO_RAM2
+    uint32_t ram2[VU_RAM2_WORDS];   /* solo la usan los tests de memoria */
+#endif
     uint32_t c31ram[VU_C31_RAM_WORDS];
     uint32_t c31regs[0x100];
     uint32_t cmos[VU_CMOS_WORDS];
@@ -58,6 +60,10 @@ typedef struct {
     int      fifo_count;
     uint32_t page_control;     /* DMA_SETUP */
     uint32_t polys_frame;      /* poligonos dibujados en el frame actual */
+
+    /* generaciones para invalidar caches de texturas (render PVR) */
+    uint32_t texblk_gen[1024];     /* por bloque de 4 KB (16 lineas) de WAVERAM */
+    uint32_t pal_gen[128];         /* por paleta de 256 colores */
 
     /* miscelanea */
     uint32_t syscntl;
@@ -93,7 +99,10 @@ int  vu_skip_memtests(void);
 void vu_tick(void);                       /* llamar cada ~1000 instrucciones */
 void vu_report_unmapped(void);
 
-/* video.c */
+/* video.c: si vu_poly_hook esta definido recibe los paquetes en vez del
+ * rasterizador por software (page = pagina de destino). */
+extern void (*vu_poly_hook)(const uint32_t *pkt, int page);
+extern void (*vu_fifo_reset_hook)(void);   /* escritura en FIFO_CONTROL */
 void vu_dma_process(void);
 void vu_video_to_rgb565(uint16_t *dst, int pitch, int page);
 

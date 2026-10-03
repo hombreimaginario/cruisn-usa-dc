@@ -20,12 +20,12 @@ static int frames, every, frame;
 static uint64_t frame_end = INSNS_PER_FRAME;
 static clock_t t_start;
 
-static uint64_t get_cycles(void) { return C.cycles; }
+static uint64_t get_cycles(void) { return rt_cycles(); }
 static uint32_t get_pc(void) { return 0; }
 static void raise_irq(int bit)
 {
     C.r[C3X_IF] |= 1u << bit;
-    C.next_event = 0;
+    RT_FORCE_CHECK();
 }
 
 static void *load_file(const char *dir, const char *name, size_t *size)
@@ -111,12 +111,23 @@ static void apply_inputs(int fr)
 static uint64_t *prof_cycles, prof_last_cyc;
 static int prof_from;
 static uint32_t prof_last_pc;
+static uint32_t blk_ring[64];
+static int ring_done;
+static unsigned blk_pos;
 static void prof_hook(uint32_t pc)
 {
-    uint64_t d = C.cycles - prof_last_cyc;
+    blk_ring[blk_pos++ & 63] = pc;
+    if (pc == 0x4AD5 || pc == 0x4B2B || (getenv("CUSA_RING_AT") && frame == atoi(getenv("CUSA_RING_AT")) && !ring_done++)) {
+        unsigned k;
+        printf("reinicio en frame %d (pc %06X). bloques previos:", frame, (unsigned)pc);
+        for (k = 0; k < 64; k++)
+            printf(" %06X", (unsigned)blk_ring[(blk_pos + k) & 63]);
+        printf("\n");
+    }
+    uint64_t d = rt_cycles() - prof_last_cyc;
     if (d < 100000 && frame >= prof_from)   /* sin esperas activas */
         prof_cycles[prof_last_pc & 0xFFFFFF] += d;
-    prof_last_cyc = C.cycles;
+    prof_last_cyc = rt_cycles();
     prof_last_pc = pc;
 }
 static void prof_report(void)
@@ -137,16 +148,18 @@ static void prof_report(void)
 }
 #endif
 
+static unsigned long idle_calls;
 void rt_platform_idle(void)
 {
-    if (C.cycles < frame_end)
-        C.cycles = frame_end;
+    idle_calls++;
+    if (rt_cycles() < frame_end)
+        rt_set_cycles(frame_end);
 }
 
 void rt_platform_event(void)
 {
     vu_tick();
-    if (C.cycles < frame_end)
+    if (rt_cycles() < frame_end)
         return;
     frame++;
     frame_end += INSNS_PER_FRAME;
@@ -159,7 +172,7 @@ void rt_platform_event(void)
     }
     vu.polys_frame = 0;
     if (frame >= frames) {
-        printf("%d frames en %.2f s\n", frames, (double)(clock() - t_start) / CLOCKS_PER_SEC);
+        printf("%d frames en %.2f s (%lu esperas saltadas)\n", frames, (double)(clock() - t_start) / CLOCKS_PER_SEC, idle_calls);
 #ifdef RT_TRACE_ON
         if (prof_cycles)
             prof_report();

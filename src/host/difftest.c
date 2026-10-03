@@ -179,8 +179,8 @@ static void test_function(uint32_t entry)
         C.e[i] = start.exp[i];
         C.rk[i] = 3;
     }
-    C.cycles = start.cycles;
-    C.next_event = C.cycles + 1000;
+    rt_set_cycles(start.cycles);
+    C.next_ev = C.cyc + 1000;
     rt_irq_disabled = 1;
     rt_cycle_limit = ~0ULL;
     rt_trace_hook = trace_hook;

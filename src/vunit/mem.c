@@ -157,8 +157,12 @@ static uint32_t dma_read(uint32_t off)
     }
 }
 
+void (*vu_fifo_reset_hook)(void);
+
 static void dma_write(uint32_t off, uint32_t v)
 {
+    if (off == 0x80 && vu_fifo_reset_hook)
+        vu_fifo_reset_hook();
     if (off == 0x40) {
         vu.page_control = v;
         return;
@@ -225,10 +229,12 @@ uint32_t c3x_mem_read(uint32_t addr)
     if (addr < VU_FASTRAM_WORDS)
         return vu.fastram[addr];
     switch (addr >> 20) {
+#ifndef VU_NO_RAM2
     case 0x4:
         if (addr - VU_RAM2_BASE < VU_RAM2_WORDS)
             return vu.ram2[addr - VU_RAM2_BASE];
         break;
+#endif
     case 0x8:
         if (addr - VU_C31_RAM_BASE < VU_C31_RAM_WORDS)
             return vu.c31ram[addr - VU_C31_RAM_BASE];
@@ -280,12 +286,14 @@ void c3x_mem_write(uint32_t addr, uint32_t v)
         return;
     }
     switch (addr >> 20) {
+#ifndef VU_NO_RAM2
     case 0x4:
         if (addr - VU_RAM2_BASE < VU_RAM2_WORDS) {
             vu.ram2[addr - VU_RAM2_BASE] = v;
             return;
         }
         break;
+#endif
     case 0x6:               /* FIFO de poligonos */
         if (vu.fifo_count < 16)
             vu.fifo[vu.fifo_count++] = v;
@@ -314,7 +322,11 @@ void c3x_mem_write(uint32_t addr, uint32_t v)
             return;
         }
         if (addr - VU_COLORAM_BASE < VU_COLORAM_WORDS) {
-            vu.coloram[addr - VU_COLORAM_BASE] = (uint16_t)v;
+            uint32_t i = addr - VU_COLORAM_BASE;
+            if (vu.coloram[i] != (uint16_t)v) {
+                vu.coloram[i] = (uint16_t)v;
+                vu.pal_gen[i >> 8]++;
+            }
             return;
         }
         io_write(addr, v);
@@ -323,6 +335,7 @@ void c3x_mem_write(uint32_t addr, uint32_t v)
         uint32_t o = (addr - VU_TEXRAM_BASE) * 2;
         vu.texram[o] = (uint8_t)v;
         vu.texram[o + 1] = (uint8_t)(v >> 8);
+        vu.texblk_gen[(o >> 12) & 1023]++;
         return;
     }
     case 0xC: case 0xD: case 0xE:

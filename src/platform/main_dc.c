@@ -22,6 +22,7 @@
 
 #include "../c3x/c3x.h"
 #include "../vunit/mem.h"
+#include "pvr_render.h"
 
 #define INSNS_PER_FRAME (25000000 / 57)
 #define TICK 500
@@ -34,8 +35,8 @@ static void raise_irq(int bit) { c3x_set_irq(&cpu, bit); }
 
 /* ---- ROM grafica bajo demanda ---- */
 
-#define GFX_PAGE_WORDS 2048          /* 8 KB por pagina */
-#define GFX_PAGES      128           /* 1 MB de cache */
+#define GFX_PAGE_WORDS 8192          /* 32 KB por pagina */
+#define GFX_PAGES      32            /* 1 MB de cache */
 
 static file_t gfx_file = FILEHND_INVALID;
 static uint32_t gfx_cache[GFX_PAGES][GFX_PAGE_WORDS];
@@ -138,6 +139,49 @@ static void present(void)
         memcpy(vram_s + (y + 40) * 640 + 64, line_rgb + y * 512, 512 * 2);
 }
 
+/* ---- perfil por muestreo (compilar con -DCUSA_PROF) ---- */
+
+#ifdef CUSA_PROF
+#define PROF_BUCKETS 65536
+static uint32_t prof_hist[PROF_BUCKETS];
+
+static void prof_tick(irq_t code, irq_context_t *ctx, void *data)
+{
+    uint32_t i = (ctx->pc - 0x8c010000u) >> 6;
+    (void)code; (void)data;
+    timer_clear(TMU1);
+    if (i < PROF_BUCKETS)
+        prof_hist[i]++;
+}
+
+static void prof_start(void)
+{
+    irq_set_handler(EXC_TMU1_TUNI1, prof_tick, NULL);
+    timer_prime(TMU1, 2000, 1);
+    timer_start(TMU1);
+    timer_enable_ints(TMU1);
+}
+
+static void prof_report(void)
+{
+    int k;
+    uint32_t total = 0, i;
+    for (i = 0; i < PROF_BUCKETS; i++)
+        total += prof_hist[i];
+    printf("PERFIL %u muestras\n", (unsigned)total);
+    for (k = 0; k < 60; k++) {
+        uint32_t best = 0;
+        for (i = 0; i < PROF_BUCKETS; i++)
+            if (prof_hist[i] > prof_hist[best])
+                best = i;
+        if (!prof_hist[best])
+            break;
+        printf("PERFIL %08X %u\n", (unsigned)(0x8c010000u + (best << 6)), (unsigned)prof_hist[best]);
+        prof_hist[best] = 0;
+    }
+}
+#endif
+
 /* ---- bucle principal ---- */
 
 #ifdef CUSA_RECOMP
@@ -146,33 +190,49 @@ static void present(void)
 static int frame;
 static uint64_t frame_end = INSNS_PER_FRAME, t0;
 
-static uint64_t rc_cycles(void) { return C.cycles; }
+static uint64_t rc_cycles(void) { return rt_cycles(); }
 static uint32_t rc_pc(void) { return 0; }
 static void rc_irq(int bit)
 {
     C.r[C3X_IF] |= 1u << bit;
-    C.next_event = 0;
+    RT_FORCE_CHECK();
 }
 
 void rt_platform_idle(void)
 {
-    if (C.cycles < frame_end)
-        C.cycles = frame_end;
+    if (rt_cycles() < frame_end)
+        rt_set_cycles(frame_end);
 }
 
 void rt_platform_event(void)
 {
     vu_tick();
-    if (C.cycles < frame_end)
+    if (rt_cycles() < frame_end)
         return;
     frame_end += INSNS_PER_FRAME;
     frame++;
-    present();
+#ifdef CUSA_SHOT
+    pvrr_frame(frame == CUSA_SHOT);
+#else
+    pvrr_frame(0);
+#endif
     read_inputs();
+#ifdef CUSA_PROF
+#ifndef PROF_FROM
+#define PROF_FROM 1000
+#define PROF_TO 1400
+#endif
+    if (frame == PROF_FROM)
+        memset(prof_hist, 0, sizeof(prof_hist));
+    if (frame == PROF_TO)
+        prof_report();
+#endif
     if (frame % 57 == 0) {
         uint64_t t = timer_ms_gettime64();
-        printf("frame %d polis=%u  %u ms por segundo de juego\n",
-               frame, (unsigned)vu.polys_frame, (unsigned)(t - t0));
+        unsigned conv, drawn;
+        pvrr_stats(&conv, &drawn);
+        printf("frame %d polis=%u dibujados=%u texturas=%u  %u ms por segundo de juego\n",
+               frame, (unsigned)vu.polys_frame, drawn, conv, (unsigned)(t - t0));
         t0 = t;
     }
     vu.polys_frame = 0;
@@ -217,11 +277,15 @@ int main(int argc, char **argv)
     free(cmos);
 
 #ifdef CUSA_RECOMP
+    pvrr_init();
     vu_get_cycles = rc_cycles;
     vu_get_pc = rc_pc;
     vu_raise_irq = rc_irq;
     vu_skip_memtests();
     rt_reset();
+#ifdef CUSA_PROF
+    prof_start();
+#endif
     t0 = timer_ms_gettime64();
     rt_run();
 #else

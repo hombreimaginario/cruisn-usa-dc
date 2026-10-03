@@ -30,8 +30,9 @@ typedef struct {
     float    f[8];
     int32_t  e[8];              /* exponente de R0-R7 (-128 = cero) */
     uint8_t  rk[8];             /* vistas validas: 1 flotante, 2 entera */
-    uint64_t cycles;
-    uint64_t next_event;
+    uint32_t cyc;               /* contador de ciclos (32 bits, rapido en SH-4) */
+    uint32_t next_ev;           /* proximo evento: cuando cyc lo alcanza */
+    uint32_t cyc_hi, cyc_last;  /* extension a 64 bits */
 } rt_state;
 
 extern rt_state C;
@@ -66,34 +67,70 @@ void rt_platform_idle(void);
 void rt_idle(void);
 #define RT_EVENT_PERIOD 500u
 
+#ifndef LIKELY
+#define LIKELY(x)   __builtin_expect(!!(x), 1)
+#define UNLIKELY(x) __builtin_expect(!!(x), 0)
+#endif
+
+/* ---- reloj ---- */
+
+static inline uint64_t rt_cycles(void)
+{
+    return ((uint64_t)(C.cyc_hi + (C.cyc < C.cyc_last ? 1u : 0u)) << 32) | C.cyc;
+}
+
+static inline void rt_set_cycles(uint64_t v)
+{
+    C.cyc = (uint32_t)v;
+    C.cyc_hi = (uint32_t)(v >> 32);
+    C.cyc_last = C.cyc;
+}
+
+#define RT_FORCE_CHECK() (C.next_ev = C.cyc)
+
 /* ---- memoria ---- */
 
-static inline uint32_t RD(uint32_t a)
+#define RT_INLINE static inline __attribute__((always_inline))
+
+/* Accesos rapidos en linea solo para la FASTRAM; el resto pasa por una
+ * funcion pequena que atiende primero la RAM interna del C31 (pila y
+ * variables "oncram") y despues el bus completo. */
+uint32_t rt_rd_slow(uint32_t a);
+void     rt_wr_slow(uint32_t a, uint32_t v);
+
+RT_INLINE uint32_t RD(uint32_t a)
 {
     a &= 0xFFFFFFu;
-    return a < VU_FASTRAM_WORDS ? vu.fastram[a] : c3x_mem_read(a);
+    if (LIKELY(a < VU_FASTRAM_WORDS))
+        return vu.fastram[a];
+    return rt_rd_slow(a);
 }
 
-static inline void WR(uint32_t a, uint32_t v)
+RT_INLINE void WR(uint32_t a, uint32_t v)
 {
     a &= 0xFFFFFFu;
-    if (a < VU_FASTRAM_WORDS)
+    if (LIKELY(a < VU_FASTRAM_WORDS))
         vu.fastram[a] = v;
     else
-        c3x_mem_write(a, v);
+        rt_wr_slow(a, v);
 }
 
-static inline void PUSH(uint32_t v)
+/* La pila vive en la RAM interna del C31. */
+RT_INLINE void PUSH(uint32_t v)
 {
-    C.r[C3X_SP]++;
-    WR(C.r[C3X_SP], v);
+    uint32_t sp = ++C.r[C3X_SP] & 0xFFFFFFu;
+    if (LIKELY(sp - VU_C31_RAM_BASE < VU_C31_RAM_WORDS))
+        vu.c31ram[sp - VU_C31_RAM_BASE] = v;
+    else
+        WR(sp, v);
 }
 
-static inline uint32_t POP(void)
+RT_INLINE uint32_t POP(void)
 {
-    uint32_t v = RD(C.r[C3X_SP]);
-    C.r[C3X_SP]--;
-    return v;
+    uint32_t sp = C.r[C3X_SP]-- & 0xFFFFFFu;
+    if (LIKELY(sp - VU_C31_RAM_BASE < VU_C31_RAM_WORDS))
+        return vu.c31ram[sp - VU_C31_RAM_BASE];
+    return RD(sp);
 }
 
 /* ---- vistas de R0-R7 ---- */
@@ -136,7 +173,7 @@ static inline void rt_sync_f(int n)
 #define F_N  8u
 #define F_UF 16u
 
-static inline uint32_t rt_nz(uint32_t r)
+RT_INLINE uint32_t rt_nz(uint32_t r)
 {
     return (r == 0 ? F_Z : 0) | ((r >> 31) ? F_N : 0);
 }
@@ -251,12 +288,9 @@ extern void (*rt_trace_hook)(uint32_t pc);
 #define RT_TRACE(pc) do { } while (0)
 #endif
 
-#define LIKELY(x)   __builtin_expect(!!(x), 1)
-#define UNLIKELY(x) __builtin_expect(!!(x), 0)
-
 /* Punto de servicio: eventos de la plataforma e interrupciones. */
 #define RT_CHECK(pc) do { \
-        if (UNLIKELY(C.cycles >= C.next_event)) { \
+        if (UNLIKELY((int32_t)(C.cyc - C.next_ev) >= 0)) { \
             uint32_t _n = rt_service(pc); \
             if (_n != (pc)) return _n; \
         } \
