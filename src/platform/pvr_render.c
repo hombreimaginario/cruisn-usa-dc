@@ -159,7 +159,7 @@ static uint32_t frame_no;
 static uint16_t conv_buf[256 * 256] __attribute__((aligned(32)));
 static pvr_ptr_t cpu_fb_tex, shot_tex;
 
-static unsigned stat_conv, stat_polys, stat_skipped;
+static unsigned stat_conv, stat_polys, stat_skipped, stat_pages;
 static uint64_t t_tex, t_wait, t_sub;
 static unsigned conv_this_frame;
 #define MAX_CONV_PER_FRAME 400
@@ -633,10 +633,18 @@ void pvrr_frame(int shot)
     shot = pending_shot;
     pending_shot = 0;
     last_shown = shown;
+    stat_pages++;
     render_page(shown, shot);
     page_npolys[shown] = 0;
     if (shot && shot_tex)
         dump_shot();
+}
+
+unsigned pvrr_pages(void)
+{
+    unsigned n = stat_pages;
+    stat_pages = 0;
+    return n;
 }
 
 void pvrr_stats(unsigned *conv, unsigned *polys)

@@ -232,6 +232,16 @@ static inline __attribute__((always_inline)) uint32_t fixf(float x)
     return (uint32_t)i;
 }
 
+/* Lectura con la ROM de programa en linea: los modelos y sus poligonos
+ * estan en ROM y RD() los mandaria por el camino lento. */
+static inline __attribute__((always_inline)) uint32_t rdm(uint32_t a)
+{
+    a &= 0xFFFFFFu;
+    if (LIKELY(a - VU_PROGROM_BASE < VU_PROGRAM_WORDS))
+        return vu.program[a - VU_PROGROM_BASE];
+    return RD(a);
+}
+
 #define MF(a)   mf(a)
 #define SF(a, x) WR((a), float_to_c3x(x))
 
@@ -463,7 +473,7 @@ uint32_t hle_poly_emit(void)
     for (;;) {
         /* 0521-0529 (en la ruta de descarte 0521-0522 ya se hicieron) */
         if (!entered_skip) {
-            r3 = RD(ar1 + 1);
+            r3 = rdm(ar1 + 1);
             ar4 = r3 & r7;
         }
         entered_skip = 0;
@@ -494,7 +504,7 @@ uint32_t hle_poly_emit(void)
             rc--;                                           /* 0550 */
             i0 = rc;                                        /* 0551 */
             ar1 += 6;                                       /* 0553 */
-            r3 = RD(ar1);
+            r3 = rdm(ar1);
             ar1 -= 1;                                       /* 0554 */
             ar4 = r3 & r7;                                  /* 0555 */
             work += 6;
@@ -516,7 +526,7 @@ uint32_t hle_poly_emit(void)
         {
             uint32_t pkt[15];
             ar3 = r3 * 3;
-            pkt[0] = RD(ar1);
+            pkt[0] = rdm(ar1);
             ar1 += 2;
             pkt[1] = r6;                                    /* 053C ... || STI R6 */
             pkt[2] = fixf(x4);
@@ -527,7 +537,7 @@ uint32_t hle_poly_emit(void)
             pkt[7] = fixf(y2);
             pkt[8] = fixf(MF(ar3 + ir0));
             pkt[9] = fixf(MF(ar3 + ir1));
-            i0 = RD(ar1); i1 = RD(ar1 + 1); i2 = RD(ar1 + 2);
+            i0 = rdm(ar1); i1 = rdm(ar1 + 1); i2 = rdm(ar1 + 2);
             ar1 += 3;
             pkt[10] = i0;
             pkt[11] = i0 >> 16;
@@ -576,7 +586,7 @@ uint32_t hle_poly_emit_pal(void)
     r6 = r[R6];
     for (;;) {
         if (!entered_skip) {                                /* 0461-0462 */
-            r3 = RD(ar1 + 1);
+            r3 = rdm(ar1 + 1);
             ar4 = r3 & r7;
         }
         entered_skip = 0;
@@ -605,7 +615,7 @@ uint32_t hle_poly_emit_pal(void)
             /* 0473 BGTD 0491: cara trasera */
             rc--;                                           /* 0491 */
             ar1 += 6;                                       /* 0494 */
-            r3 = RD(ar1);
+            r3 = rdm(ar1);
             ar1 -= 1;                                       /* 0495 */
             ar4 = r3 & r7;                                  /* 0496 */
             work += 6;
@@ -624,12 +634,12 @@ uint32_t hle_poly_emit_pal(void)
         }
         {
             uint32_t pkt[15], w0, i0;
-            w0 = RD(ar1);                                   /* 0477 */
+            w0 = rdm(ar1);                                   /* 0477 */
             ar1 += 2;
             ar3 = r3 * 3;                                   /* 0479 */
             ar6 = rt_shift(w0, r6, 0, 0) + bk;              /* 0478, 047A */
             pkt[0] = w0;
-            pkt[1] = rt_shift(RD(ar6), r6, 0, 0) << 8;      /* 047B-047C */
+            pkt[1] = rt_shift(rdm(ar6), r6, 0, 0) << 8;      /* 047B-047C */
             pkt[2] = fixf(x4);
             pkt[3] = fixf(y4);
             pkt[4] = fixf(x5);
@@ -638,7 +648,7 @@ uint32_t hle_poly_emit_pal(void)
             pkt[7] = fixf(y2);
             pkt[8] = fixf(MF(ar3 + ir0));
             pkt[9] = fixf(MF(ar3 + ir1));
-            i0 = RD(ar1); i1 = RD(ar1 + 1); i2 = RD(ar1 + 2);
+            i0 = rdm(ar1); i1 = rdm(ar1 + 1); i2 = rdm(ar1 + 2);
             ar1 += 3;
             pkt[10] = i0;
             pkt[11] = i0 >> 16;
@@ -688,7 +698,7 @@ uint32_t hle_poly_emit_quad(void)
     for (;;) {
         int back;
         if (!entered_skip) {                                /* 0561-0562 */
-            r3 = RD(ar1 + 1);
+            r3 = rdm(ar1 + 1);
             ar4 = r3 & r7;
         }
         entered_skip = 0;
@@ -730,7 +740,7 @@ uint32_t hle_poly_emit_quad(void)
         if (back) {
             rc--;                                           /* 0597 */
             ar1 += 6;                                       /* 059A */
-            r3 = RD(ar1);
+            r3 = rdm(ar1);
             r3_float = 0;
             ar1 -= 1;                                       /* 059B */
             ar4 = r3 & r7;                                  /* 059C */
@@ -751,7 +761,7 @@ uint32_t hle_poly_emit_quad(void)
         {
             uint32_t pkt[15], i0;
             x3 = MF(ar3 + ir0);
-            pkt[0] = RD(ar1);                               /* 057F */
+            pkt[0] = rdm(ar1);                               /* 057F */
             ar1 += 2;
             pkt[1] = r6;                                    /* 0583 ... || STI R6 */
             pkt[2] = fixf(x4);
@@ -762,7 +772,7 @@ uint32_t hle_poly_emit_quad(void)
             pkt[7] = fixf(y2);
             pkt[8] = fixf(x3);
             pkt[9] = fixf(y3);
-            i0 = RD(ar1); i1 = RD(ar1 + 1); i2 = RD(ar1 + 2);
+            i0 = rdm(ar1); i1 = rdm(ar1 + 1); i2 = rdm(ar1 + 2);
             ar1 += 3;
             pkt[10] = i0;
             pkt[11] = i0 >> 16;
@@ -898,7 +908,7 @@ uint32_t hle_model_visible(void)
             C.cyc += work;
             return 0x002175u;
         }
-        ri1 = RD(ar4);                                 /* 216A */
+        ri1 = rdm(ar4);                                 /* 216A */
         ar4 += 5;
         r1_is_float = 0;
         work += 1;

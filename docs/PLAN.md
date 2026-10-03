@@ -30,10 +30,12 @@ Alternativas descartadas:
 
 ### Estado (3 oct 2026)
 - [x] Recompilador funcionando: una funcion C por bloque con saltos de cola garantizados (`musttail`), flags perezosas, registros de 40 bits con vistas sincronizadas, validado bloque a bloque contra el interprete (`cusa_difftest`).
-- [x] HLE nativo: descompresor LZW de texturas y bucles de transformacion de vertices de DIRQ y de modelos.
-- [x] Render con PowerVR (`src/platform/pvr_render.c`).
-- [x] Dreamcast (Flycast): escenas con ~250 poligonos casi a tiempo real; escenas con ~2400 poligonos unas 3x mas lentas.
-- [ ] Siguiente: HLE de la emision de poligonos (0x0521-0x0550) y del otro bucle de vertices (0x0221), coche del jugador ausente en el render PVR, sonido, controles finos.
+- [x] HLE nativo: descompresor LZW de texturas, bucles de vertices (DIRQ, mundo, modelos), visibilidad de modelos, orden Z y los tres bucles de envio de poligonos (0x0461, 0x0521, 0x0561).
+- [x] Render con PowerVR (`src/platform/pvr_render.c`): cache de texturas en VRAM, orden por textura, envio directo a las store queues.
+- [x] Sonido: banco pre-renderizado con MAME y reproductor del protocolo DCS ([SONIDO.md](SONIDO.md)).
+- [x] Ritmo: la interrupcion de video va a 57 Hz de tiempo real. El juego mide cuantas interrupciones pasan entre frames (`NFRAMES`) y escala el movimiento, asi que en las escenas pesadas va a su velocidad con menos imagenes por segundo, como el original cuando se le cargaba una escena. `-DCUSA_FIXED_CYCLES` vuelve al modo reproducible (interrupcion cada N ciclos emulados) para perfiles y capturas.
+- [x] Dreamcast (Flycast), modo demo: escenas ligeras a 28 imagenes/s como el arcade; carretera con ~2500 poligonos por frame a 11-21 imagenes/s (el arcade da 28).
+- [ ] Siguiente: mas velocidad (bucles de vertices, lecturas de ROM), controles finos y calibracion, CMOS en la VMU, probar el sonido de la carrera en consola.
 
 ### Fase 1: Recompilador (`tools/c31recomp.py`)
 - Descubrimiento de código a partir de los vectores, `CALL`, saltos y tablas de punteros; símbolos tomados de la fuente (etiquetas de `DIRQ.ASM`, `MPROC.ASM`...).

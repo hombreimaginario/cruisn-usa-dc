@@ -190,7 +190,10 @@ static void prof_report(void)
 #include "../recomp/rt.h"
 
 static int frame;
-static uint64_t frame_end = INSNS_PER_FRAME, t0;
+static uint64_t t0;
+#if defined(CUSA_FIXED_CYCLES) || defined(CUSA_NO_THROTTLE)
+static uint64_t frame_end = INSNS_PER_FRAME;
+#endif
 
 static uint64_t rc_cycles(void) { return rt_cycles(); }
 static uint32_t rc_pc(void) { return 0; }
@@ -200,18 +203,9 @@ static void rc_irq(int bit)
     RT_FORCE_CHECK();
 }
 
-void rt_platform_idle(void)
+/* Lo que pasa en cada interrupcion de video (INT0, 57 por segundo) */
+static void vblank(void)
 {
-    if (rt_cycles() < frame_end)
-        rt_set_cycles(frame_end);
-}
-
-void rt_platform_event(void)
-{
-    vu_tick();
-    if (rt_cycles() < frame_end)
-        return;
-    frame_end += INSNS_PER_FRAME;
     frame++;
 #if defined(CUSA_SHOT) && defined(CUSA_SHOT_EVERY)
     pvrr_frame(frame >= CUSA_SHOT && (frame - CUSA_SHOT) % CUSA_SHOT_EVERY == 0);
@@ -222,19 +216,6 @@ void rt_platform_event(void)
 #endif
     read_inputs();
     sound_frame();
-#ifndef CUSA_NO_THROTTLE
-    {
-        /* Ritmo del original: 57 frames por segundo. Si vamos adelantados se
-         * espera; si vamos atrasados no se recupera (el juego se ralentiza). */
-        static uint64_t next_us;
-        uint64_t now = timer_us_gettime64();
-        next_us += 1000000 / 57;
-        if (next_us + 100000 < now)
-            next_us = now;              /* muy atrasados: no esperar nunca */
-        while (timer_us_gettime64() < next_us)
-            thd_pass();
-    }
-#endif
 #ifdef CUSA_PROF
 #ifndef PROF_FROM
 #define PROF_FROM 1000
@@ -247,15 +228,99 @@ void rt_platform_event(void)
 #endif
     if (frame % 57 == 0) {
         uint64_t t = timer_ms_gettime64();
-        unsigned conv, drawn;
+        unsigned conv, drawn, pages = pvrr_pages();
         pvrr_stats(&conv, &drawn);
-        printf("frame %d polis=%u dibujados=%u texturas=%u  %u ms por segundo de juego\n",
-               frame, (unsigned)vu.polys_frame, drawn, conv, (unsigned)(t - t0));
+        printf("frame %d polis=%u dibujados=%u texturas=%u imagenes=%u  %u ms por segundo de juego\n",
+               frame, (unsigned)vu.polys_frame, drawn, conv, pages, (unsigned)(t - t0));
         t0 = t;
     }
     vu.polys_frame = 0;
     rc_irq(0);
 }
+
+#if defined(CUSA_FIXED_CYCLES) || defined(CUSA_NO_THROTTLE)
+/*
+ * Interrupcion de video cada INSNS_PER_FRAME ciclos emulados: reproducible
+ * (perfiles, capturas en un frame concreto), pero si el SH-4 no llega el
+ * juego entero va a camara lenta.
+ */
+void rt_platform_idle(void)
+{
+    if (rt_cycles() < frame_end)
+        rt_set_cycles(frame_end);
+}
+
+void rt_platform_event(void)
+{
+    vu_tick();
+    if (rt_cycles() < frame_end)
+        return;
+    frame_end += INSNS_PER_FRAME;
+#ifndef CUSA_NO_THROTTLE
+    {
+        static uint64_t next_us;
+        uint64_t now = timer_us_gettime64();
+        next_us += 1000000 / 57;
+        if (next_us + 100000 < now)
+            next_us = now;
+        while (timer_us_gettime64() < next_us)
+            thd_pass();
+    }
+#endif
+    vblank();
+}
+#else
+/*
+ * Interrupcion de video a 57 Hz de tiempo real, como en la placa: si el
+ * SH-4 no termina un frame del juego a tiempo, el juego ve pasar mas
+ * interrupciones (NFRAMES) y mueve todo en proporcion, igual que el original
+ * cuando una escena le cuesta. Se pierden imagenes por segundo pero el juego
+ * va a su velocidad.
+ */
+#define VBL_US 17544                    /* 1/57 s */
+static uint64_t next_vbl_us;
+
+static void vblank_due(uint64_t now)
+{
+    next_vbl_us += VBL_US;
+    if (now > next_vbl_us + 4 * VBL_US)
+        next_vbl_us = now + VBL_US;     /* muy atrasados: no acumular */
+    vblank();
+}
+
+void rt_platform_idle(void)
+{
+    uint64_t now;
+
+    /* Esperando la conversion del ADC: no hace falta esperar a la imagen */
+    if (vu.adc_irq_delay) {
+        while (vu.adc_irq_delay)
+            vu_tick();
+        return;
+    }
+    /* El juego espera a la siguiente interrupcion de video */
+    now = timer_us_gettime64();
+    if (!next_vbl_us)
+        next_vbl_us = now + VBL_US;
+    while (now < next_vbl_us) {
+        thd_pass();
+        now = timer_us_gettime64();
+    }
+    vblank_due(now);
+}
+
+void rt_platform_event(void)
+{
+    uint64_t now;
+
+    vu_tick();
+    now = timer_us_gettime64();
+    if (!next_vbl_us)
+        next_vbl_us = now + VBL_US;
+    if (now >= next_vbl_us)
+        vblank_due(now);
+}
+#endif
 #endif
 
 int main(int argc, char **argv)
