@@ -106,6 +106,43 @@ static void apply_inputs(int fr)
     }
 }
 
+#ifdef RT_TRACE_ON
+/* Perfil: ciclos emulados por bloque (CUSA_PROFILE=1) */
+static uint64_t *prof_cycles, prof_last_cyc;
+static int prof_from;
+static uint32_t prof_last_pc;
+static void prof_hook(uint32_t pc)
+{
+    uint64_t d = C.cycles - prof_last_cyc;
+    if (d < 100000 && frame >= prof_from)   /* sin esperas activas */
+        prof_cycles[prof_last_pc & 0xFFFFFF] += d;
+    prof_last_cyc = C.cycles;
+    prof_last_pc = pc;
+}
+static void prof_report(void)
+{
+    int k;
+    uint64_t total = 0;
+    uint32_t a;
+    for (a = 0; a < 0x1000000; a++)
+        total += prof_cycles[a];
+    printf("perfil (ciclos emulados por bloque):\n");
+    for (k = 0; k < 25; k++) {
+        uint32_t best = 0;
+        for (a = 0; a < 0x1000000; a++)
+            if (prof_cycles[a] > prof_cycles[best]) best = a;
+        printf("  %06X %5.1f%%\n", (unsigned)best, 100.0 * prof_cycles[best] / total);
+        prof_cycles[best] = 0;
+    }
+}
+#endif
+
+void rt_platform_idle(void)
+{
+    if (C.cycles < frame_end)
+        C.cycles = frame_end;
+}
+
 void rt_platform_event(void)
 {
     vu_tick();
@@ -123,6 +160,10 @@ void rt_platform_event(void)
     vu.polys_frame = 0;
     if (frame >= frames) {
         printf("%d frames en %.2f s\n", frames, (double)(clock() - t_start) / CLOCKS_PER_SEC);
+#ifdef RT_TRACE_ON
+        if (prof_cycles)
+            prof_report();
+#endif
         exit(0);
     }
     apply_inputs(frame);
@@ -160,6 +201,11 @@ int main(int argc, char **argv)
     free(cm);
 
     rt_reset();
+#ifdef RT_TRACE_ON
+    prof_cycles = calloc(0x1000000, sizeof(uint64_t));
+    prof_from = getenv("CUSA_PROF_FROM") ? atoi(getenv("CUSA_PROF_FROM")) : 0;
+    rt_trace_hook = prof_hook;
+#endif
     apply_inputs(0);
     t_start = clock();
     rt_run();

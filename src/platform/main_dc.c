@@ -138,19 +138,63 @@ static void present(void)
         memcpy(vram_s + (y + 40) * 640 + 64, line_rgb + y * 512, 512 * 2);
 }
 
+/* ---- bucle principal ---- */
+
+#ifdef CUSA_RECOMP
+#include "../recomp/rt.h"
+
+static int frame;
+static uint64_t frame_end = INSNS_PER_FRAME, t0;
+
+static uint64_t rc_cycles(void) { return C.cycles; }
+static uint32_t rc_pc(void) { return 0; }
+static void rc_irq(int bit)
+{
+    C.r[C3X_IF] |= 1u << bit;
+    C.next_event = 0;
+}
+
+void rt_platform_idle(void)
+{
+    if (C.cycles < frame_end)
+        C.cycles = frame_end;
+}
+
+void rt_platform_event(void)
+{
+    vu_tick();
+    if (C.cycles < frame_end)
+        return;
+    frame_end += INSNS_PER_FRAME;
+    frame++;
+    present();
+    read_inputs();
+    if (frame % 57 == 0) {
+        uint64_t t = timer_ms_gettime64();
+        printf("frame %d polis=%u  %u ms por segundo de juego\n",
+               frame, (unsigned)vu.polys_frame, (unsigned)(t - t0));
+        t0 = t;
+    }
+    vu.polys_frame = 0;
+    rc_irq(0);
+}
+#endif
+
 int main(int argc, char **argv)
 {
     uint32_t *program;
     uint32_t *cmos;
     size_t n;
-    int frame;
-    uint64_t t0;
 
     (void)argc; (void)argv;
 
     vid_set_mode(DM_640x480, PM_RGB565);
     vid_clear(0, 0, 0);
+#ifdef CUSA_RECOMP
+    printf("Cruis'n USA DC - codigo recompilado\n");
+#else
     printf("Cruis'n USA DC - interprete de referencia\n");
+#endif
 
     program = load_file("/cd/program.bin", &n);
     if (!program || n != VU_PROGRAM_WORDS * 4) {
@@ -162,9 +206,6 @@ int main(int argc, char **argv)
         printf("aviso: falta /cd/gfx.bin, no habra texturas\n");
     memset(gfx_tag, 0xFF, sizeof(gfx_tag));
 
-    vu_get_cycles = get_cycles;
-    vu_get_pc = get_pc;
-    vu_raise_irq = raise_irq;
     vu_gfx_fetch = gfx_file != FILEHND_INVALID ? gfx_fetch : NULL;
     vu_reset(program, NULL);
 
@@ -175,28 +216,41 @@ int main(int argc, char **argv)
     }
     free(cmos);
 
-    c3x_reset(&cpu);
+#ifdef CUSA_RECOMP
+    vu_get_cycles = rc_cycles;
+    vu_get_pc = rc_pc;
+    vu_raise_irq = rc_irq;
+    vu_skip_memtests();
+    rt_reset();
     t0 = timer_ms_gettime64();
-
-    for (frame = 0;; frame++) {
-        uint64_t end = (uint64_t)(frame + 1) * INSNS_PER_FRAME;
-
-        read_inputs();
-        while (cpu.cycles < end) {
-            uint64_t next = cpu.cycles + TICK;
-            c3x_run(&cpu, next < end ? next : end);
-            vu_tick();
-        }
-        c3x_set_irq(&cpu, 0);
-        present();
-
-        if ((frame + 1) % 57 == 0) {
-            uint64_t t = timer_ms_gettime64();
-            printf("frame %d pc=%06X polis=%u  %u ms por segundo de juego\n",
-                   frame + 1, (unsigned)cpu.pc, (unsigned)vu.polys_frame,
-                   (unsigned)(t - t0));
-            t0 = t;
+    rt_run();
+#else
+    vu_get_cycles = get_cycles;
+    vu_get_pc = get_pc;
+    vu_raise_irq = raise_irq;
+    c3x_reset(&cpu);
+    {
+        int frame;
+        uint64_t t0 = timer_ms_gettime64();
+        for (frame = 0;; frame++) {
+            uint64_t end = (uint64_t)(frame + 1) * INSNS_PER_FRAME;
+            read_inputs();
+            while (cpu.cycles < end) {
+                uint64_t next = cpu.cycles + TICK;
+                c3x_run(&cpu, next < end ? next : end);
+                vu_tick();
+            }
+            c3x_set_irq(&cpu, 0);
+            present();
+            if ((frame + 1) % 57 == 0) {
+                uint64_t t = timer_ms_gettime64();
+                printf("frame %d pc=%06X polis=%u  %u ms por segundo de juego\n",
+                       frame + 1, (unsigned)cpu.pc, (unsigned)vu.polys_frame,
+                       (unsigned)(t - t0));
+                t0 = t;
+            }
         }
     }
+#endif
     return 0;
 }

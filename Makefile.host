@@ -21,7 +21,7 @@ host: build/cusa_host
 # Codigo recompilado: requiere generated/recomp (tools/c31recomp.py)
 RECOMP_DIR ?= generated/recomp
 -include $(RECOMP_DIR)/files.mk
-RECOMP_HOST_SRCS = src/host/main_recomp.c src/recomp/rt.c src/vunit/mem.c src/vunit/video.c src/c3x/interp.c
+RECOMP_HOST_SRCS = src/host/main_recomp.c src/recomp/rt.c src/recomp/hle.c src/vunit/mem.c src/vunit/video.c src/c3x/interp.c
 
 build/cusa_recomp: $(RECOMP_HOST_SRCS) $(RECOMP_SRCS) src/recomp/rt.h
 	@mkdir -p build
@@ -29,7 +29,13 @@ build/cusa_recomp: $(RECOMP_HOST_SRCS) $(RECOMP_SRCS) src/recomp/rt.h
 
 recomp: build/cusa_recomp
 
-DIFF_SRCS = src/host/difftest.c src/recomp/rt.c src/vunit/mem.c src/vunit/video.c src/c3x/interp.c
+build/cusa_profile: $(RECOMP_HOST_SRCS) $(RECOMP_SRCS) src/recomp/rt.h
+	@mkdir -p build
+	$(CC) $(CFLAGS) -DRT_TRACE_ON -Wno-unused-label -Wno-parentheses-equality -Isrc/recomp -o $@ $(RECOMP_HOST_SRCS) $(RECOMP_SRCS) -lm
+
+profile: build/cusa_profile
+
+DIFF_SRCS = src/host/difftest.c src/recomp/rt.c src/recomp/hle.c src/vunit/mem.c src/vunit/video.c src/c3x/interp.c
 
 build/cusa_difftest: $(DIFF_SRCS) $(RECOMP_SRCS) src/recomp/rt.h
 	@mkdir -p build

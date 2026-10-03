@@ -27,6 +27,22 @@ ROM_BASE, ROM_END = 0xC00000, 0xC80000     # codigo que se ejecuta desde ROM (TH
 RANGES = ((0x40, CODE_END), (ROM_BASE, ROM_END))
 
 
+# Esperas activas conocidas: al llegar a la direccion, si se cumple la
+# condicion, el juego solo esta esperando la siguiente interrupcion de video.
+IDLE_HINTS = {
+    # ZSORTWT (OBJ.ASM): "BR ZSORTWL" tras una pasada sin intercambios; la
+    # lista ya esta ordenada y solo se espera a que INT0 borre CLEARRDY.
+    0x0071A8: ("SYNC_I(6);", "C.r[6] == 0"),
+}
+
+
+# Rutinas sustituidas por codigo nativo (src/recomp/hle.c): al llegar a la
+# direccion se llama a la funcion, que devuelve el siguiente PC.
+HLE_HOOKS = {
+    0x00A334: "hle_lzw_segment",     # COMP.ASM DECOMPRESS_TOPLP3
+}
+
+
 def in_space(a):
     return 0x40 <= a < CODE_END or ROM_BASE <= a < ROM_END
 
@@ -1218,11 +1234,17 @@ def gen_block(prog, gen, start, seq, live_out):
     gen.known = {}; gen.rkset = {}
     gen.out.append("L_%06X:" % start)
     gen.emit("RT_TRACE(0x%06XU);" % start)
+    if start in HLE_HOOKS:
+        gen.emit("return %s();" % HLE_HOOKS[start])
+        return
     if start == gen.region[0] or start in prog.backward_heads or start in prog.vectors:
         gen.emit("RT_CHECK(0x%06XU);" % start)
     last = seq[-1]
     count = len(seq) + (3 if last.delayed else 0)
     gen.emit("C.cycles += %d;" % count)
+    if start in IDLE_HINTS:
+        pre, cond = IDLE_HINTS[start]
+        gen.emit("%s if (%s) rt_idle();" % (pre, cond))
 
     # Vida de flags tras cada instruccion (hacia atras desde live_out)
     insts = list(seq)
@@ -1303,6 +1325,38 @@ def gen_rptb_end(prog, gen, addr, live_out):
     gen.emit("}")
 
 
+def is_pure(ins):
+    """Sin escrituras a memoria ni llamadas (solo lee y compara)."""
+    if not ins.valid or ins.kind != "op":
+        return False
+    w = ins.w
+    top = w >> 29
+    if top == 0:
+        op = (w >> 23) & 0x3F
+        d = (w >> 16) & 0x1F
+        if op in (0x1C, 0x1D, 0x1E, 0x1F, 0x27, 0x28, 0x29, 0x2A, 0x2B, 0x0C, 0x36):
+            return False
+        return d not in (R_SP, R_ST, R_IE, R_IF)
+    if top in (1, 2):
+        return ((w >> 16) & 0x1F) not in (R_SP, R_ST, R_IE, R_IF)
+    return False
+
+
+def is_idle_loop(prog, br, slots):
+    """Bucle de espera: salta a su propio inicio y solo lee."""
+    t = br.target
+    if t is None or t > br.addr or br.addr - t > 8:
+        return False
+    if not (t in prog.leaders):
+        return False
+    for a in range(t, br.addr):
+        if not is_pure(prog.get(a)):
+            return False
+        if a != t and a in prog.leaders:
+            return False
+    return all(is_pure(s) for s in slots)
+
+
 def gen_flow(prog, gen, i, slots, live_out, live_here):
     k = i.kind
     a = i.addr
@@ -1334,6 +1388,8 @@ def gen_flow(prog, gen, i, slots, live_out, live_here):
             gen.materialize()
         if k == "breg":
             gen.emit("if (bc) return tj;")
+        elif is_idle_loop(prog, i, slots):
+            gen.emit("if (bc) { rt_idle(); %s }" % gen.jump(i.target))
         else:
             gen.emit("if (bc) %s" % gen.jump(i.target))
         if i.cond != 0:

@@ -116,8 +116,12 @@ void vu_dma_process(void)
         texoff = sizeof(vu.texram) - 0x10000;
     tex = vu.texram + texoff;
 
+#ifndef VU_NO_RASTER
     draw_triangle(page, &q[0], &q[1], &q[2], d[0], pixdata, tex);
     draw_triangle(page, &q[0], &q[2], &q[3], d[0], pixdata, tex);
+#else
+    (void)page; (void)pixdata; (void)tex;
+#endif
 }
 
 void vu_video_to_rgb565(uint16_t *dst, int pitch, int page)

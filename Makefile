@@ -10,6 +10,15 @@ OBJS = src/platform/main_dc.o \
 
 KOS_CFLAGS += -std=gnu99 -O2 -Wall -Wextra
 
+# Si existe el codigo recompilado (tools/c31recomp.py -> generated/recomp),
+# se usa en lugar del interprete.
+RECOMP_DIR ?= generated/recomp
+ifneq ($(wildcard $(RECOMP_DIR)/files.mk),)
+include $(RECOMP_DIR)/files.mk
+OBJS += src/recomp/rt.o src/recomp/hle.o $(RECOMP_SRCS:.c=.o)
+KOS_CFLAGS += -DCUSA_RECOMP -I$(CURDIR)/src/recomp -Wno-unused-label
+endif
+
 all: rm-elf $(TARGET)
 
 include $(KOS_BASE)/Makefile.rules

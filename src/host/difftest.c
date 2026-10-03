@@ -40,6 +40,7 @@ static void raise_irq(int bit)
 }
 
 void rt_platform_event(void) { }
+void rt_platform_idle(void) { }
 
 static void *load_file(const char *dir, const char *name, size_t *size)
 {
@@ -224,6 +225,14 @@ static void test_function(uint32_t entry)
             bad++;
             break;
         }
+    }
+    if (memcmp(mem_rc->texram, mem_ref->texram, sizeof(mem_rc->texram)) != 0) {
+        size_t k;
+        for (k = 0; k < sizeof(mem_rc->texram) && mem_rc->texram[k] == mem_ref->texram[k]; k++)
+            ;
+        if (reported < 60)
+            printf("  %06X: WAVERAM distinta desde el byte %zX\n", (unsigned)entry, k);
+        bad++;
     }
     if (bad) {
         failures++;

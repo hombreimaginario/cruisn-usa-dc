@@ -115,6 +115,12 @@ void rt_run(void)
         pc = rt_dispatch(pc);
 }
 
+void rt_idle(void)
+{
+    rt_platform_idle();
+    C.next_event = 0;
+}
+
 /* ---- operaciones poco frecuentes ---- */
 
 uint32_t rt_bitrev(uint32_t ar, uint32_t ir)

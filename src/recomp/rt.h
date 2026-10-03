@@ -60,6 +60,10 @@ uint32_t rt_unknown(uint32_t pc);
 
 /* Lo implementa la plataforma: se llama cada RT_EVENT_PERIOD ciclos. */
 void rt_platform_event(void);
+/* Espera activa detectada: la plataforma adelanta el reloj al siguiente
+ * evento que pueda despertar al juego (normalmente el fin de frame). */
+void rt_platform_idle(void);
+void rt_idle(void);
 #define RT_EVENT_PERIOD 500u
 
 /* ---- memoria ---- */
@@ -236,6 +240,7 @@ static inline uint32_t rt_circ(uint32_t ar, int32_t step, uint32_t bk)
 }
 
 uint32_t rt_bitrev(uint32_t ar, uint32_t ir);
+uint32_t hle_lzw_segment(void);
 float    rt_lde(float dst, float src);
 float    rt_ldm(float dst, float src);
 
