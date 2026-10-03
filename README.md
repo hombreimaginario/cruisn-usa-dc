@@ -44,7 +44,22 @@ source $KOS_BASE/environ.sh
 make && make cdi
 ```
 
-Para probar en consola o emulador, pon `program.bin` en la raíz del CD (`/cd/program.bin`) o sírvelo con dcload (`/pc/program.bin`).
+`make cdi` mete en el CD `program.bin`, `gfx.bin`, `cmos.bin` y, si existe, `sound.bin` (el banco de sonido, ver [docs/SONIDO.md](docs/SONIDO.md)).
+
+## Controles (mando de Dreamcast)
+
+| Mando | Arcade |
+|---|---|
+| Stick analógico | volante |
+| Gatillo R / L | acelerador / freno |
+| A / B | subir / bajar marcha (4 marchas) |
+| Cruceta izquierda, arriba, derecha | vistas 1, 2, 3 |
+| X | cambiar emisora de radio |
+| Y | moneda |
+| START | empezar |
+| START + Y | botón de servicio (menú de ajustes del arcade) |
+
+Los ajustes, récords y contadores del arcade (su CMOS) se guardan solos en la primera VMU (fichero `CRUISNUS`, unos 66 bloques) cuando cambian; si no hay VMU se usa la CMOS calibrada del CD.
 
 ## Estructura
 

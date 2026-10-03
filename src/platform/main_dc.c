@@ -24,6 +24,7 @@
 #include "../vunit/mem.h"
 #include "pvr_render.h"
 #include "sound_dc.h"
+#include "cmos_vmu.h"
 
 #define INSNS_PER_FRAME (25000000 / 57)
 #define TICK 500
@@ -228,6 +229,11 @@ static void vblank(void)
 #endif
     if (frame % 57 == 0) {
         uint64_t t = timer_ms_gettime64();
+#ifdef CUSA_CMOS_TEST
+        if (frame == 570)
+            vu.cmos[7] ^= 0x5A;         /* fuerza un guardado (prueba) */
+#endif
+        cmos_check();
         unsigned conv, drawn, pages = pvrr_pages();
         pvrr_stats(&conv, &drawn);
         printf("frame %d polis=%u dibujados=%u texturas=%u imagenes=%u  %u ms por segundo de juego\n",
@@ -353,10 +359,7 @@ int main(int argc, char **argv)
     vu_reset(program, NULL);
 
     cmos = load_file("/cd/cmos.bin", &n);
-    if (cmos && n == sizeof(vu.cmos)) {
-        memcpy(vu.cmos, cmos, n);
-        printf("CMOS calibrada cargada\n");
-    }
+    cmos_init(cmos, cmos ? n : 0);
     free(cmos);
 
 #ifdef CUSA_RECOMP
