@@ -9,7 +9,7 @@ OBJS = src/platform/main_dc.o \
        src/vunit/video.o \
        src/platform/pvr_render.o
 
-KOS_CFLAGS += -std=gnu99 -O2 -Wall -Wextra -DVU_NO_RAM2
+KOS_CFLAGS += -std=gnu99 -O2 -Wall -Wextra -DVU_NO_RAM2 -DVU_NO_UNMAPPED_LOG
 
 # Si existe el codigo recompilado (tools/c31recomp.py -> generated/recomp),
 # se usa en lugar del interprete.

@@ -45,6 +45,7 @@ HLE_HOOKS = {
     0x000521: ("hle_poly_emit", None),     # DIRQ.ASM envio de poligonos
     0x000221: ("hle_vtx_world", 0x000247), # DIRQ.ASM vertices con origen
     0x00213E: ("hle_model_visible", (0x00216B, 0x002175)),  # visibilidad de modelo
+    0x007189: ("hle_zsort", (0x0071A8, 0x0071A9)),          # OBJ.ASM ZSORTWL
 }
 
 
@@ -1277,6 +1278,8 @@ def gen_block(prog, gen, start, seq, live_out):
     gen.known = {}; gen.rkset = {}
     gen.out.append("L_%06X:" % start)
     gen.emit("RT_TRACE(0x%06XU);" % start)
+    if start in HLE_HOOKS and (start == gen.region[0] or start in prog.backward_heads or start in prog.vectors):
+        gen.emit("RT_CHECK(0x%06XU);" % start)
     if start in HLE_HOOKS:
         fn, cont = HLE_HOOKS[start]
         if cont is None:

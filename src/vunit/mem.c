@@ -39,6 +39,10 @@ static struct {
 static void unmapped(int write, uint32_t addr, uint32_t value)
 {
     int i;
+#ifdef VU_NO_UNMAPPED_LOG
+    (void)write; (void)addr; (void)value;
+    return;
+#endif
     for (i = 0; i < UNMAPPED_SLOTS; i++) {
         if (unmapped_log[i].count == 0) {
             unmapped_log[i].addr = addr;

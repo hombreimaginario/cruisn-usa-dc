@@ -639,3 +639,82 @@ uint32_t hle_model_visible(void)
     C.cyc += work;
     return 0x00216Bu;
 }
+
+/* ------------------------------------------------------------------------ */
+/* ZSORTWT (OBJ.ASM): ordenacion por distancia mientras se espera al video  */
+/* ------------------------------------------------------------------------ */
+
+#define ZS_CLEARRDY  0x00C93Fu
+#define ZS_ODIST     28u
+#define ZS_EXIT      0x0071A9u      /* ZSWTX / ZSWTXX */
+#define ZS_IDLE      0x0071A8u      /* "BR ZSORTWL" tras una pasada */
+
+/*
+ * El original hace pasadas de burbuja sobre la lista enlazada de objetos
+ * hasta que la interrupcion de video borra CLEARRDY. Aqui se ordena del todo
+ * de una vez (mismo criterio y mismos intercambios) y se vuelve al punto de
+ * espera, donde el recompilador adelanta el reloj hasta la interrupcion.
+ */
+uint32_t hle_zsort(void)
+{
+    uint32_t *r = C.r;
+    uint32_t head = RD(((r[DP] & 0xFF) << 16) | 0x40);
+    uint32_t ar0 = head, ar1, ar2, nxt;
+    int swapped, passes = 0;
+    uint32_t work = 0;
+
+    r[R6] = 0;
+    for (;;) {
+        swapped = 0;
+        ar0 = head;
+        ar1 = RD(ar0);
+        if (!ar1)
+            goto out_exit;
+        ar2 = RD(ar1);
+        if (!ar2)
+            goto out_exit;
+        if (RD(ZS_CLEARRDY) == 0)
+            goto out_exit;
+        for (;;) {
+            int32_t d1 = (int32_t)RD(ar1 + ZS_ODIST), d2 = (int32_t)RD(ar2 + ZS_ODIST);
+            work += 8;
+            if ((int32_t)(d1 - d2) >= 0) {           /* ZWPRIOK */
+                nxt = RD(ar2);
+                ar0 = ar1;
+                ar1 = ar2;
+                ar2 = nxt;
+                if (!nxt)
+                    break;
+            } else {                                 /* DOSWAP */
+                swapped = 1;
+                WR(ar0, ar2);
+                nxt = RD(ar2);
+                WR(ar1, nxt);
+                WR(ar2, ar1);
+                ar0 = ar2;
+                ar2 = nxt;
+                if (!nxt)
+                    break;
+            }
+        }
+        passes++;
+        if (!swapped || passes > 64)
+            break;
+    }
+    /* lista ordenada: punto de espera con R6 = 0 */
+    r[R6] = 0;
+    SYNC_I(0);
+    r[R0] = RD(ZS_CLEARRDY); C.rk[0] = 2;
+    SYNC_I(1);
+    r[R1] = 0; C.rk[1] = 2;
+    r[AR0] = ar0; r[AR1] = ar1; r[AR2] = ar2;
+    C.cyc += work;
+    return ZS_IDLE;
+
+out_exit:
+    SYNC_I(0);
+    r[R0] = RD(ZS_CLEARRDY); C.rk[0] = 2;
+    C.r[C3X_ST] = (C.r[C3X_ST] & ~0x1Fu) | rt_nz(r[R0]);
+    C.cyc += work;
+    return ZS_EXIT;
+}
