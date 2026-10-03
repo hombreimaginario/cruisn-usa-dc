@@ -281,6 +281,7 @@ uint32_t rt_bitrev(uint32_t ar, uint32_t ir);
 uint32_t hle_lzw_segment(void);
 void     hle_vtx_dirq(void);
 void     hle_vtx_model(void);
+void     hle_vtx_world(void);
 uint32_t hle_poly_emit(void);
 float    rt_lde(float dst, float src);
 float    rt_ldm(float dst, float src);

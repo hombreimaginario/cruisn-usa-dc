@@ -43,6 +43,7 @@ HLE_HOOKS = {
     0x000141: ("hle_vtx_dirq", 0x000163),  # DIRQ.ASM bucle de vertices
     0x00211D: ("hle_vtx_model", 0x002134), # bucle de vertices de modelos
     0x000521: ("hle_poly_emit", None),     # DIRQ.ASM envio de poligonos
+    0x000221: ("hle_vtx_world", 0x000247), # DIRQ.ASM vertices con origen
 }
 
 

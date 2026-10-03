@@ -233,19 +233,22 @@ static const float *inv_table(uint32_t ar2)
  * tabla se leen una vez (el bucle no las modifica) y la zona temporal *AR4
  * solo se escribe con los valores de la ultima iteracion.
  */
-void hle_vtx_dirq(void)
+/* Nucleo comun de los bucles 0x0141 y 0x0221: (x,y,z) del vertice, menos un
+ * origen opcional, por la matriz de camara, mas traslacion en Z, proyeccion
+ * con INVTAB. tz_addr: direccion de la traslacion Z; org: origen o NULL. */
+static void vtx_project(uint32_t rs, uint32_t re, uint32_t tz_addr, const float *org, int imm_shift)
 {
     uint32_t *r = C.r;
     float R0 = getf(0), R1 = getf(1), R2 = getf(2), R3 = getf(3);
     float R4 = getf(4), R5 = getf(5), R6 = getf(6), R7 = getf(7);
-    uint32_t ar1 = r[AR1], ar2 = r[AR2], ar3 = r[AR3], ar4 = r[AR4], ar5 = r[AR5], ar6 = r[AR6];
+    uint32_t ar1 = r[AR1], ar2 = r[AR2], ar3 = r[AR3], ar4 = r[AR4], ar5 = r[AR5];
     uint32_t bk = r[BK], ir1 = r[IR1];
     int32_t n = (int32_t)r[RC_];
     uint32_t iters = (uint32_t)(n + 1), k;
     const uint32_t *src = mem_ptr(ar1, iters * 2);
     const float *inv = inv_table(ar2);
-    float m[9], tz = MF(ar6 + 1), tx = 0, ty = 0, tzv = 0;
-    int sh = (int32_t)(bk << 25) >> 25;
+    float m[9], tz = MF(tz_addr), tx = 0, ty = 0, tzv = 0;
+    int sh = imm_shift ? -16 : (int32_t)(bk << 25) >> 25;
 
     for (k = 0; k < 9; k++)
         m[k] = MF(ar5 + k);
@@ -264,9 +267,14 @@ void hle_vtx_dirq(void)
             x = (float)(int32_t)rt_shift(w0 << 16, bk, 1, 0);
         }
         z = (float)(int32_t)w1;
+        if (org) {
+            x = x - org[0];
+            y = y - org[1];
+            z = z - org[2];
+        }
         tx = x; ty = y; tzv = z;
         {
-            /* x = parte baja (R3), y = parte alta (R2), como en 0x142-0x146 */
+            /* x = parte baja (R3), y = parte alta (R2) */
             float X = (m[0] * x + m[1] * y) + m[2] * z;
             float Y = (m[3] * x + m[4] * y) + m[5] * z;
             float Z = ((m[6] * x + m[7] * y) + m[8] * z) + tz;
@@ -295,11 +303,29 @@ void hle_vtx_dirq(void)
     setf(0, R0); setf(1, R1); setf(2, R2); setf(3, R3);
     r[AR1] = ar1 + 2 * iters; r[AR3] = ar3; r[AR5] = ar5; r[IR1] = ir1;
     r[RC_] = 0xFFFFFFFFu;
-    r[RS_] = 0x000141u;
-    r[RE_] = 0x000162u;
+    r[RS_] = rs;
+    r[RE_] = re;
     C.r[C3X_ST] &= ~C3X_ST_RM;
     FL_FLT(R0);
-    C.cyc += iters * 34 - 34;           /* el bloque ya sumo una iteracion */
+    C.cyc += (iters - 1) * (re - rs + 1);  /* el bloque ya sumo una iteracion */
+}
+
+/* Bucle RPTB 0x0141-0x0162 (NEXTOBJ) */
+void hle_vtx_dirq(void)
+{
+    vtx_project(0x000141u, 0x000162u, C.r[AR6] + 1, NULL, 0);
+}
+
+/* Bucle RPTB 0x0221-0x0246: igual pero restando el origen *+AR0(1..3) y con
+ * la traslacion Z en *+AR7(1). */
+void hle_vtx_world(void)
+{
+    float org[3];
+    uint32_t ar0 = C.r[AR0];
+    org[0] = MF(ar0 + 1);
+    org[1] = MF(ar0 + 2);
+    org[2] = MF(ar0 + 3);
+    vtx_project(0x000221u, 0x000246u, C.r[AR7] + 1, org, 1);
 }
 
 /*
