@@ -4,7 +4,7 @@ grabaciones de la placa DCS hechas con tools/mame/render_dcs.lua.
 
 Uso:
     dcs_bank.py --plan1 > pasada1.txt
-        lista de todos los codigos (1-1023) con 6 s para la primera pasada
+        los codigos que usa el juego (tools/dcs_codes.txt), 6 s cada uno
     dcs_bank.py --plan2 --sndtab src_orig pasada1.wav pasada1.log > pasada2.txt
         segunda pasada: los que siguen sonando a los 6 s (musica 400 s,
         bucles 30 s) y el motor a varias revoluciones
@@ -145,6 +145,17 @@ def sndtab_tracks(srcdir):
     return tracks
 
 
+def game_codes():
+    """Codigos que usa el juego (tools/dcs_codes.txt): los de las tablas de
+    sonido de la fuente mas los observados en ejecucion."""
+    codes = set()
+    for line in open(os.path.join(HERE, "dcs_codes.txt")):
+        line = line.split("#")[0].strip()
+        if line:
+            codes.add(int(line))
+    return codes
+
+
 def last_sound(seg):
     last = 0
     for i in range(len(seg) - 1, -1, -64):
@@ -206,9 +217,8 @@ def main():
     ap.add_argument("recordings", nargs="*")
     a = ap.parse_args() if "--plan1" not in sys.argv else None
     if a is None:
-        for c in range(1, 1024):
-            if not 980 <= c <= 998:          # pitidos de test y "parar pista"
-                print(c, 6)
+        for c in sorted(game_codes()):
+            print(c, 6)
         return
     if len(a.recordings) % 2:
         sys.exit("hacen falta pares wav log")
@@ -229,6 +239,7 @@ def main():
         sys.exit("falta -o")
     build_dsp()
 
+    allowed = game_codes()
     music, sfx, engine = [], [], []
     for code, (seg, rate) in sorted(sounds.items(), key=lambda x: str(x[0])):
         if isinstance(code, str):
@@ -236,7 +247,7 @@ def main():
             if m:
                 engine.append((int(m.group(1), 16), seg, rate))
             continue
-        if code >= 0x400:
+        if code >= 0x400 or (allowed is not None and code not in allowed):
             continue
         if last_sound(seg) == 0:
             continue

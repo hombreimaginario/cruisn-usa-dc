@@ -6,7 +6,7 @@
 #   reconozca. Hace falta la fuente original en src_orig/ (tools/fetch_source.sh)
 #   para saber que codigos son musica.
 #
-# Son dos pasadas de MAME sin limite de velocidad (unos 10 y 15 minutos en un
+# Son dos pasadas de MAME sin limite de velocidad (unos 2 y 10 minutos en un
 # ordenador actual). Los WAV intermedios quedan en generated/sound_work/.
 set -e
 

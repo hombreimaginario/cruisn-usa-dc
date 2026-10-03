@@ -39,7 +39,7 @@ Emular el ADSP-2105 en el SH-4 a la vez que el juego no es viable, así que el s
 
 Todo el proceso lo hace `tools/make_sound.sh <dir de ROMs de MAME>`:
 
-1. primera pasada: los 1004 códigos posibles (1-1023 menos los pitidos de test y "parar pista") durante 6 s cada uno;
+1. primera pasada: los 209 códigos que usa el juego (`tools/dcs_codes.txt`: los de las tablas de la fuente más variantes vistas en ejecución) durante 6 s cada uno. Se probaron los 1004 códigos posibles y el DCS tiene más sonidos, pero el juego no los pide;
 2. `dcs_bank.py --plan2` elige los que siguen sonando a los 6 s (música 400 s, bucles 30 s) y añade el motor a 60, 90, C0 y E0 revoluciones;
 3. segunda pasada con esa lista y `dcs_bank.py -o generated/sound.bin` con las dos grabaciones.
 
