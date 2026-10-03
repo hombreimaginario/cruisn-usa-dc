@@ -667,10 +667,19 @@ void pvrr_reserve_shot(void)
 
 void pvrr_frame(int shot)
 {
+    static int still, seen_polys;
     int shown = vu.page_control & 1;
     pending_shot |= shot;
-    if (shown == last_shown)
-        return;
+    if (shown == last_shown) {
+        /* Arranque: el juego escribe textos en la memoria de video sin
+         * poligonos ni cambio de pagina; se muestran cada medio segundo hasta
+         * que aparece el primer poligono. */
+        if (page_npolys[0] || page_npolys[1])
+            seen_polys = 1;
+        if (seen_polys || ++still < 28)
+            return;
+    }
+    still = 0;
     shot = pending_shot;
     pending_shot = 0;
     last_shown = shown;
