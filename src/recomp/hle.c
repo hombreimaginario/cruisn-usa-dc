@@ -194,7 +194,45 @@ static inline void setf(int n, float x)
     C.rk[n] = 1;
 }
 
-#define MF(a)   c3x_to_float(RD(a))
+/* Conversion C3x -> IEEE en linea (la de c3x.h no siempre se expande). */
+static inline __attribute__((always_inline)) float c2f(uint32_t v)
+{
+    union { uint32_t u; float f; } o;
+    int32_t e = (int8_t)(v >> 24);
+    uint32_t frac = v & 0x7FFFFFu;
+    if (e + 127 <= 0)
+        return 0.0f;
+    if (!(v & 0x800000u)) {
+        o.u = ((uint32_t)(e + 127) << 23) | frac;
+    } else if (frac == 0) {
+        if (e + 128 >= 255)
+            o.u = 0xFF7FFFFFu;
+        else
+            o.u = 0x80000000u | ((uint32_t)(e + 128) << 23);
+    } else {
+        o.u = 0x80000000u | ((uint32_t)(e + 127) << 23) | (0x800000u - frac);
+    }
+    return o.f;
+}
+
+static inline __attribute__((always_inline)) float mf(uint32_t a)
+{
+    a &= 0xFFFFFFu;
+    return c2f(LIKELY(a < VU_FASTRAM_WORDS) ? vu.fastram[a] : RD(a));
+}
+
+static inline __attribute__((always_inline)) uint32_t fixf(float x)
+{
+    int32_t i;
+    if (UNLIKELY(x >= 2147483648.0f)) return 0x7FFFFFFFu;
+    if (UNLIKELY(x < -2147483648.0f)) return 0x80000000u;
+    i = (int32_t)x;
+    if ((float)i > x)
+        i--;
+    return (uint32_t)i;
+}
+
+#define MF(a)   mf(a)
 #define SF(a, x) WR((a), float_to_c3x(x))
 
 enum { RC_ = 27, RS_ = 25, RE_ = 26 };
@@ -483,14 +521,14 @@ uint32_t hle_poly_emit(void)
             ar3 = r3 * 3;
             fifo_put(w0);
             fifo_put(r6);                                   /* 053C ... || STI R6 */
-            fifo_put(rt_fix(MF(ar4 + ir0), 0));
-            fifo_put(rt_fix(MF(ar4 + ir1), 0));
-            fifo_put(rt_fix(MF(ar5 + ir0), 0));
-            fifo_put(rt_fix(MF(ar5 + ir1), 0));
-            fifo_put(rt_fix(MF(ar2 + ir0), 0));
-            fifo_put(rt_fix(MF(ar2 + ir1), 0));
-            fifo_put(rt_fix(MF(ar3 + ir0), 0));
-            fifo_put(rt_fix(MF(ar3 + ir1), 0));
+            fifo_put(fixf(MF(ar4 + ir0)));
+            fifo_put(fixf(MF(ar4 + ir1)));
+            fifo_put(fixf(MF(ar5 + ir0)));
+            fifo_put(fixf(MF(ar5 + ir1)));
+            fifo_put(fixf(MF(ar2 + ir0)));
+            fifo_put(fixf(MF(ar2 + ir1)));
+            fifo_put(fixf(MF(ar3 + ir0)));
+            fifo_put(fixf(MF(ar3 + ir1)));
             i0 = RD(ar1); i1 = RD(ar1 + 1); i2 = RD(ar1 + 2);
             ar1 += 3;
             fifo_put(i0);

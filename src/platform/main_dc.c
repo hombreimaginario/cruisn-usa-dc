@@ -220,6 +220,19 @@ void rt_platform_event(void)
     pvrr_frame(0);
 #endif
     read_inputs();
+#ifndef CUSA_NO_THROTTLE
+    {
+        /* Ritmo del original: 57 frames por segundo. Si vamos adelantados se
+         * espera; si vamos atrasados no se recupera (el juego se ralentiza). */
+        static uint64_t next_us;
+        uint64_t now = timer_us_gettime64();
+        if (!next_us || now > next_us + 100000)
+            next_us = now;
+        next_us += 1000000 / 57;
+        while (timer_us_gettime64() < next_us)
+            thd_pass();
+    }
+#endif
 #ifdef CUSA_PROF
 #ifndef PROF_FROM
 #define PROF_FROM 1000
