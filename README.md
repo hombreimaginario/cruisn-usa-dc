@@ -39,7 +39,10 @@ CUSA_SKIPTESTS=1 CUSA_COVERAGE=generated/coverage.bin build/cusa_host generated 
 python3 tools/c31recomp.py generated/program.bin generated/recomp --coverage generated/coverage.bin
 make -f Makefile.host recomp difftest      # cusa_recomp y la prueba diferencial
 
-# 6. Compilar para Dreamcast e imagen de CD
+# 6. Sonido (opcional, necesita MAME): graba la placa DCS y crea generated/sound.bin
+tools/make_sound.sh ~/ruta/a/roms/de/mame
+
+# 7. Compilar para Dreamcast e imagen de CD
 source $KOS_BASE/environ.sh
 make && make cdi
 ```

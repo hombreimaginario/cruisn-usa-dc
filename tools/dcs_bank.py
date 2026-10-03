@@ -3,6 +3,11 @@
 grabaciones de la placa DCS hechas con tools/mame/render_dcs.lua.
 
 Uso:
+    dcs_bank.py --plan1 > pasada1.txt
+        lista de todos los codigos (1-1023) con 6 s para la primera pasada
+    dcs_bank.py --plan2 --sndtab src_orig pasada1.wav pasada1.log > pasada2.txt
+        segunda pasada: los que siguen sonando a los 6 s (musica 400 s,
+        bucles 30 s) y el motor a varias revoluciones
     dcs_bank.py -o generated/sound.bin --sndtab src_orig \\
         grabacion1.wav grabacion1.log [grabacion2.wav grabacion2.log ...]
 
@@ -192,20 +197,37 @@ def crossfade_loop(seg, rate, intro_s, body_s, fade_s):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("-o", "--output", required=True)
+    ap.add_argument("-o", "--output")
+    ap.add_argument("--plan1", action="store_true")
+    ap.add_argument("--plan2", action="store_true")
     ap.add_argument("--sndtab", help="directorio con SNDTAB.INC (fuente original)")
     ap.add_argument("--budget", type=int, default=1500 * 1024,
                     help="bytes de RAM del AICA para efectos")
-    ap.add_argument("recordings", nargs="+")
-    a = ap.parse_args()
+    ap.add_argument("recordings", nargs="*")
+    a = ap.parse_args() if "--plan1" not in sys.argv else None
+    if a is None:
+        for c in range(1, 1024):
+            if not 980 <= c <= 998:          # pitidos de test y "parar pista"
+                print(c, 6)
+        return
     if len(a.recordings) % 2:
         sys.exit("hacen falta pares wav log")
-    build_dsp()
     tracks = sndtab_tracks(a.sndtab)
 
     sounds = {}
     for i in range(0, len(a.recordings), 2):
         sounds.update(load_recording(a.recordings[i], a.recordings[i + 1]))
+
+    if a.plan2:
+        for code, (seg, rate) in sorted(sounds.items(), key=lambda x: str(x[0])):
+            if isinstance(code, int) and last_sound(seg) and still_playing(seg, rate):
+                print(code, 400 if tracks.get(code, 1) == 0 else 30)
+        for rpm in (0x60, 0x90, 0xC0, 0xE0):
+            print("eng%02X 4 55CC %02XFF" % (rpm, rpm))
+        return
+    if not a.output:
+        sys.exit("falta -o")
+    build_dsp()
 
     music, sfx, engine = [], [], []
     for code, (seg, rate) in sorted(sounds.items(), key=lambda x: str(x[0])):

@@ -37,16 +37,13 @@ Emular el ADSP-2105 en el SH-4 a la vez que el juego no es viable, así que el s
    - Los ADPCM en bucle se codifican dos veces el tramo del bucle para que el estado del decodificador al final coincida con el del inicio (sin chasquidos).
 3. `src/platform/sound_dc.c` decodifica el protocolo que escribe el juego (gancho `vu_sound_hook`) y reproduce: un canal del AICA por pista, uno para el motor y un stream para la música, que lee del CD un hilo aparte en bloques de 64 KB.
 
-Grabación (unos 45 min de MAME a ~14x):
+Todo el proceso lo hace `tools/make_sound.sh <dir de ROMs de MAME>`:
 
-```
-cd <dir de mame con crusnusa41>
-DCS_CODES=generated/dcs_codes.txt mame crusnusa41 -video none -nothrottle \
-    -wavwrite todo.wav -autoboot_script tools/mame/render_dcs.lua > todo.log
-# segunda pasada de 200-400 s para las músicas y bucles, y el motor
-python3 tools/dcs_bank.py -o generated/sound.bin --sndtab src_orig \
-    --budget 1792000 todo.wav todo.log bucles.wav bucles.log
-```
+1. primera pasada: los 1004 códigos posibles (1-1023 menos los pitidos de test y "parar pista") durante 6 s cada uno;
+2. `dcs_bank.py --plan2` elige los que siguen sonando a los 6 s (música 400 s, bucles 30 s) y añade el motor a 60, 90, C0 y E0 revoluciones;
+3. segunda pasada con esa lista y `dcs_bank.py -o generated/sound.bin` con las dos grabaciones.
+
+Hace falta MAME (probado con 0.288) con el romset `crusnusa41` y la fuente original en `src_orig/` (para saber qué códigos son música).
 
 Nada de este audio generado se sube al repositorio.
 
