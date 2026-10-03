@@ -23,56 +23,19 @@
 #include <string.h>
 
 #include "sound_dc.h"
+#include "../sound/dcs_proto.h"
 
-/* ---- banco ---- */
+#define entries dcs_entries
+#define nentries dcs_nentries
+#define NTRACKS DCS_NTRACKS
 
-#define SF_LOOP   1
-#define SF_PCM16  2
-#define SF_MUSIC  4
-#define SF_ENGINE 8
-
-typedef struct {
-    uint16_t code;
-    uint8_t track;
-    uint8_t flags;
-    uint32_t rate;
-    uint32_t offset;
-    uint32_t bytes;
-    uint32_t loopstart;     /* muestras */
-    uint32_t loopend;       /* muestras; 0 = hasta el final */
-    uint16_t param;         /* motor: revoluciones de la muestra */
-    uint16_t pad;
-    uint32_t pad2;
-} snd_entry;
-
-#define MAX_ENTRIES 320
-#define MAX_ENGINE  8
-#define NTRACKS     4
-
-static snd_entry entries[MAX_ENTRIES];
-static sfxhnd_t handles[MAX_ENTRIES];
-static int nentries;
-static int16_t by_code[0x400];          /* codigo -> entrada, -1 si no hay */
-static int engine_idx[MAX_ENGINE], nengine;
+static sfxhnd_t handles[DCS_MAX_ENTRIES];
 static file_t bank_file = FILEHND_INVALID;
 static int ready;
 
-/* ---- estado del protocolo ---- */
+/* ---- canales del AICA: una voz por pista del DCS y otra para el motor ---- */
 
-static int skip_byte;                   /* tras el reset se descarta un byte */
-static int hi = -1;                     /* byte alto pendiente */
-static int expect;                      /* 0, 1 = volumen, 2 = motor */
-static int vol_target;                  /* -1 general, 0-3 pista */
-static int pending_track = -1;          /* pista cuyo volumen se acaba de fijar */
-static int master_vol = 255;
-static int track_vol[NTRACKS] = { 255, 255, 255, 255 };
-
-/* ---- canales del AICA ---- */
-
-static int track_chn[NTRACKS];
-static int engine_chn = -1;
-static int engine_cur = -1;             /* entrada sonando en el canal del motor */
-static int engine_speed, engine_vol;
+static int voice_chn[DCS_NTRACKS + 1];
 
 static void chn_update(int chn, int freq, int vol)
 {
@@ -85,14 +48,6 @@ static void chn_update(int chn, int freq, int vol)
     chan->freq = freq;
     chan->vol = vol;
     snd_sh4_to_aica(tmp, cmd->size);
-}
-
-static int scale_vol(int v, int track)
-{
-    v = v * master_vol / 255;
-    if (track >= 0)
-        v = v * track_vol[track] / 255;
-    return v;
 }
 
 /* ---- musica en streaming ---- */
@@ -227,177 +182,72 @@ static void music_play(int idx, int vol)
     sem_signal(&mus_sem);
 }
 
-/* ---- reproduccion ---- */
+/* ---- backend del decodificador (src/sound/dcs_proto.c) ---- */
 
-static void track_stop(int track)
+static void be_play(int voice, int idx, int vol, int freq)
 {
-    if (track == 0)
-        music_stop();
-    snd_sfx_stop(track_chn[track]);
-}
+    const snd_entry *e = &entries[idx];
+    sfx_play_data_t d;
 
-static void play_code(int code)
-{
-    int idx, track, vol;
-    const snd_entry *e;
-
-    if (code == 0) {                     /* parar todo (el motor sigue) */
-        int t;
-        for (t = 0; t < NTRACKS; t++)
-            track_stop(t);
-        return;
-    }
-    if (code >= 995 && code <= 998) {    /* KILLCHAN0-3 */
-        track_stop(code - 995);
-        return;
-    }
-    if (code >= (int)(sizeof(by_code) / sizeof(by_code[0])) || (idx = by_code[code]) < 0)
-        return;
-    e = &entries[idx];
-    track = pending_track >= 0 ? pending_track : e->track;
-    vol = scale_vol(255, track);
 #ifdef CUSA_SNDLOG
-    printf("snd %04X pista %d vol %d%s\n", code, track, vol, (e->flags & SF_MUSIC) ? " musica" : "");
+    if (voice < DCS_NTRACKS)
+        printf("snd %04X pista %d vol %d\n", e->code, voice, vol);
 #endif
-    if (e->flags & SF_MUSIC) {
-        snd_sfx_stop(track_chn[0]);
-        music_play(idx, vol);
-        return;
-    }
-    if (track == 0)
-        music_stop();
     if (handles[idx] == SFXHND_INVALID)
         return;
-    {
-        sfx_play_data_t d;
-        memset(&d, 0, sizeof(d));
-        d.chn = track_chn[track];
-        d.idx = handles[idx];
-        d.vol = vol;
-        d.pan = 128;
-        d.loop = (e->flags & SF_LOOP) != 0;
-        d.loopstart = e->loopstart;
-        d.loopend = e->loopend;
-        snd_sfx_play_ex(&d);
-    }
+    memset(&d, 0, sizeof(d));
+    d.chn = voice_chn[voice];
+    d.idx = handles[idx];
+    d.vol = vol;
+    d.pan = 128;
+    d.freq = freq;
+    d.loop = (e->flags & SF_LOOP) != 0;
+    d.loopstart = e->loopstart;
+    d.loopend = e->loopend;
+    snd_sfx_play_ex(&d);
 }
 
-/* El tono del motor sube casi en linea recta con las revoluciones (medido en
- * MAME: f0 ~ 0.14 * rpm + 4.4 Hz). Se elige la muestra mas cercana y se
- * ajusta la frecuencia de reproduccion. */
-static void engine_update(void)
+static void be_update(int voice, int vol, int freq)
 {
-    int i, best = -1, bestd = 1 << 30, freq, vol;
-    const snd_entry *e;
-
-    if (!nengine || engine_chn < 0)
-        return;
-    vol = scale_vol(engine_vol, -1);
-    if (vol <= 0) {
-        if (engine_cur >= 0)
-            snd_sfx_stop(engine_chn);
-        engine_cur = -1;
-        return;
-    }
-    for (i = 0; i < nengine; i++) {
-        int d = abs((int)entries[engine_idx[i]].param - engine_speed);
-        if (d < bestd) {
-            bestd = d;
-            best = engine_idx[i];
-        }
-    }
-    e = &entries[best];
-    freq = (int)(e->rate * (0.14f * engine_speed + 4.4f) / (0.14f * e->param + 4.4f));
-    if (freq < 1000)
-        freq = 1000;
-    if (freq > 88000)
-        freq = 88000;
-    if (best != engine_cur) {
-        sfx_play_data_t d;
-        memset(&d, 0, sizeof(d));
-        d.chn = engine_chn;
-        d.idx = handles[best];
-        d.vol = vol;
-        d.pan = 128;
-        d.loop = 1;
-        d.freq = freq;
-        d.loopstart = e->loopstart;
-        d.loopend = e->loopend;
-        snd_sfx_play_ex(&d);
-        engine_cur = best;
-    } else {
-        chn_update(engine_chn, freq, vol);
-    }
+    chn_update(voice_chn[voice], freq, vol);
 }
 
-static void word(int w)
+static void be_stop(int voice)
 {
-    if (expect == 1) {
-        int v = (w >> 8) & 0xFF;
-        expect = 0;
-        if (((w ^ (w >> 8)) & 0xFF) != 0xFF)
-            return;                      /* comprobacion vv ~vv fallida */
-        if (vol_target < 0) {
-            master_vol = v;
-            if (mus_playing)
-                snd_stream_volume(mus_hnd, scale_vol(255, 0));
-        } else {
-            track_vol[vol_target] = v;
-            pending_track = vol_target;
-            if (vol_target == 0 && mus_playing)
-                snd_stream_volume(mus_hnd, scale_vol(255, 0));
-        }
-        return;
-    }
-    if (expect == 2) {
-        expect = 0;
-        engine_speed = (w >> 8) & 0xFF;
-        engine_vol = w & 0xFF;
-        engine_update();
-        return;
-    }
-    if (w >= 0x55AA && w <= 0x55AE) {
-        expect = 1;
-        vol_target = w == 0x55AA ? -1 : w - 0x55AB;
-        return;
-    }
-    if (w == 0x55CC) {
-        expect = 2;
-        return;
-    }
-    play_code(w);
-    pending_track = -1;
+    snd_sfx_stop(voice_chn[voice]);
+}
+
+static void be_music(int idx, int vol)
+{
+#ifdef CUSA_SNDLOG
+    printf("snd musica %d vol %d\n", idx >= 0 ? entries[idx].code : -1, vol);
+#endif
+    if (idx < 0)
+        music_stop();
+    else
+        music_play(idx, vol);
+}
+
+static void be_music_volume(int vol)
+{
+    mus_start_vol = vol;
+    if (mus_playing)
+        snd_stream_volume(mus_hnd, vol);
+}
+
+static const dcs_backend aica_backend = {
+    be_play, be_update, be_stop, be_music, be_music_volume
+};
+
+static int be_usable(int idx)
+{
+    return handles[idx] != SFXHND_INVALID;
 }
 
 void sound_dcs_write(uint32_t v)
 {
-    if (!ready)
-        return;
-    if (v & 0x100) {                     /* linea de reset del DCS */
-        if (v & 1) {
-            skip_byte = 1;
-            hi = -1;
-            expect = 0;
-        } else {
-            int t;
-            for (t = 0; t < NTRACKS; t++)
-                track_stop(t);
-            if (engine_cur >= 0)
-                snd_sfx_stop(engine_chn);
-            engine_cur = -1;
-        }
-        return;
-    }
-    if (skip_byte) {
-        skip_byte = 0;
-        return;
-    }
-    if (hi < 0) {
-        hi = v & 0xFF;
-        return;
-    }
-    word((hi << 8) | (v & 0xFF));
-    hi = -1;
+    if (ready)
+        dcs_proto_write(v);
 }
 
 void sound_frame(void)
@@ -429,27 +279,22 @@ int sound_init(const char *path)
     uint8_t *tmp = NULL;
     size_t tmp_size = 0;
 
-    memset(by_code, 0xFF, sizeof(by_code));
     bank_file = fs_open(path, O_RDONLY);
     if (bank_file == FILEHND_INVALID) {
         printf("sonido: falta %s\n", path);
         return -1;
     }
-    if (fs_read(bank_file, hdr, 16) != 16 || memcmp(hdr, "CUSASND1", 8)) {
+    if (fs_read(bank_file, hdr, 16) != 16 || (nentries = dcs_parse_header((uint8_t *)hdr)) < 0) {
         printf("sonido: %s no es un banco valido\n", path);
+        nentries = 0;
         return -1;
     }
-    memcpy(&nentries, hdr + 8, 4);
-    if (nentries > MAX_ENTRIES)
-        nentries = MAX_ENTRIES;
     fs_read(bank_file, entries, nentries * sizeof(snd_entry));
 
     snd_stream_init();
     for (i = 0; i < nentries; i++) {
         snd_entry *e = &entries[i];
         handles[i] = SFXHND_INVALID;
-        if (!(e->flags & SF_ENGINE) && e->code < sizeof(by_code) / sizeof(by_code[0]))
-            by_code[e->code] = i;
         if (e->flags & SF_MUSIC)
             continue;
         if (e->bytes > tmp_size) {
@@ -464,14 +309,12 @@ int sound_init(const char *path)
                                           (e->flags & SF_PCM16) ? 16 : 4, 1);
         if (handles[i] == SFXHND_INVALID)
             printf("sonido: sin memoria para %04X\n", e->code);
-        if ((e->flags & SF_ENGINE) && nengine < MAX_ENGINE && handles[i] != SFXHND_INVALID)
-            engine_idx[nengine++] = i;
     }
     free(tmp);
 
-    for (i = 0; i < NTRACKS; i++)
-        track_chn[i] = snd_sfx_chn_alloc();
-    engine_chn = snd_sfx_chn_alloc();
+    for (i = 0; i <= DCS_NTRACKS; i++)
+        voice_chn[i] = snd_sfx_chn_alloc();
+    dcs_proto_init(&aica_backend, be_usable);
 
     mus_hnd = snd_stream_alloc(mus_callback, SND_STREAM_BUFFER_MAX_ADPCM);
     sem_init(&mus_sem, 0);

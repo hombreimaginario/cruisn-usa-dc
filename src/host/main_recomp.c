@@ -12,6 +12,7 @@
 #include <time.h>
 
 #include "../recomp/rt.h"
+#include "sound_preview.h"
 
 #define INSNS_PER_FRAME (25000000 / 57)
 
@@ -22,8 +23,13 @@ static clock_t t_start;
 
 /* CUSA_SOUNDLOG: decodifica el protocolo del puerto de sonido (bytes con
  * estrobo 0xFDxx) y registra los codigos de 16 bits enviados. */
+static int sound_log, sound_wav;
 static void sound_hook(uint32_t v)
 {
+    if (sound_wav)
+        sound_preview_byte(v);
+    if (!sound_log)
+        return;
     if (v & 0x100)
         printf("SND frame %d reset %u\n", frame, (unsigned)(v & 1));
     else
@@ -184,6 +190,8 @@ void rt_platform_event(void)
     if (rt_cycles() < frame_end)
         return;
     frame++;
+    if (sound_wav)
+        sound_preview_frame();
     frame_end += INSNS_PER_FRAME;
     {
         static int last_page = -1, flips, polys_acc;
@@ -249,6 +257,8 @@ void rt_platform_event(void)
         if (prof_cycles)
             prof_report();
 #endif
+        if (sound_wav)
+            sound_preview_close();
         exit(0);
     }
     apply_inputs(frame);
@@ -287,7 +297,15 @@ int main(int argc, char **argv)
 
     if (getenv("CUSA_POLYSTATS"))
         vu_poly_hook = stats_hook;
-    if (getenv("CUSA_SOUNDLOG"))
+    /* CUSA_SOUNDLOG: registra los bytes; CUSA_SOUNDWAV=fichero.wav: mezcla lo
+     * que sonaria en Dreamcast con generated/sound.bin */
+    sound_log = getenv("CUSA_SOUNDLOG") != NULL;
+    if (getenv("CUSA_SOUNDWAV")) {
+        char path[512];
+        snprintf(path, sizeof(path), "%s/sound.bin", gdir);
+        sound_wav = sound_preview_init(path, getenv("CUSA_SOUNDWAV")) == 0;
+    }
+    if (sound_log || sound_wav)
         vu_sound_hook = sound_hook;
     if (getenv("CUSA_COVERAGE"))
         c3x_cov = calloc(0x1000000, 1);

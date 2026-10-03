@@ -45,6 +45,14 @@ Todo el proceso lo hace `tools/make_sound.sh <dir de ROMs de MAME>`:
 
 Hace falta MAME (probado con 0.288) con el romset `crusnusa41` y la fuente original en `src_orig/` (para saber qué códigos son música).
 
+Para escuchar en el ordenador lo que sonaría en consola (mismo decodificador, `src/sound/dcs_proto.c`, con un mezclador sencillo):
+
+```
+CUSA_SOUNDWAV=carrera.wav build/cusa_recomp generated 5200 0   # con CUSA_INPUT/CUSA_ANALOG para jugar una carrera
+```
+
+El banco se normaliza con una ganancia global (MAME saca el DCS a unos -13 dB de pico); la mezcla de una carrera queda sin saturar.
+
 Nada de este audio generado se sube al repositorio.
 
 Pendiente: comprobar de oído en consola real (en Flycast se ve que decodifica y que el stream se alimenta), y la música `0002` (Munster surf) y `0171` no muestran un bucle exacto en 400 s: se repiten enteras.

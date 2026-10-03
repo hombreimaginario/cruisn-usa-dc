@@ -9,6 +9,7 @@ OBJS = src/platform/main_dc.o \
        src/vunit/video.o \
        src/platform/pvr_render.o \
        src/platform/sound_dc.o \
+       src/sound/dcs_proto.o \
        src/platform/cmos_vmu.o
 
 KOS_CFLAGS += -std=gnu99 -O2 -Wall -Wextra -DVU_NO_RAM2 -DVU_NO_UNMAPPED_LOG

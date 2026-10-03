@@ -70,6 +70,17 @@ def read_raw(p, typecode="h"):
     return a
 
 
+GAIN = 1.0
+
+
+def amp(samples):
+    """Ganancia global: MAME saca el DCS a unos -13 dB de pico; se sube todo
+    el banco por igual (mantiene la mezcla) para aprovechar los 16 bits."""
+    if GAIN == 1.0:
+        return samples
+    return array.array("h", (max(-32768, min(32767, int(x * GAIN))) for x in samples))
+
+
 def resample(samples, src, dst):
     if src == dst:
         return samples
@@ -254,6 +265,15 @@ def main():
         track = tracks.get(code, 1)
         (music if track == 0 else sfx).append((code, track, seg, rate))
 
+    global GAIN
+    peak = 1
+    for _, _, seg, _ in music + sfx:
+        peak = max(peak, max(abs(x) for x in seg[::3]))
+    for _, seg, _ in engine:
+        peak = max(peak, max(abs(x) for x in seg[::3]))
+    GAIN = min(4.0, 29000.0 / peak)
+    print("pico %d, ganancia %.2f" % (peak, GAIN))
+
     entries, blobs = [], []
 
     # ---- musica ----
@@ -272,7 +292,7 @@ def main():
                 loop = 0
         else:
             seg = seg[:last_sound(seg) + rate // 50]
-        r = resample(seg, rate, MUSIC_RATE)
+        r = resample(amp(seg), rate, MUSIC_RATE)
         lp = None if loop is None else (int(loop * MUSIC_RATE / rate) & ~1)
         data = adpcm(r, lp)
         entries.append(dict(code=code, track=0, flags=flags, rate=MUSIC_RATE,
@@ -285,7 +305,7 @@ def main():
     eng_bytes = 0
     for speed, seg, rate in engine:
         body, s = crossfade_loop(seg[rate:], rate, 0.3, 1.0, 0.2)
-        body = resample(body, rate, ENGINE_RATE)
+        body = resample(amp(body), rate, ENGINE_RATE)
         s = int(s * ENGINE_RATE / rate) if s else 0
         body = body[s:]                  # solo el bucle; el fundido ya enlaza
         data = body.tobytes()
@@ -325,7 +345,7 @@ def main():
         r = sfx_rate
         if len(seg) * r / rate > MAX_SFX_SAMPLES:
             r = int(MAX_SFX_SAMPLES * rate / len(seg)) - 1
-        x = resample(seg, rate, r)[:MAX_SFX_SAMPLES - 64]
+        x = resample(amp(seg), rate, r)[:MAX_SFX_SAMPLES - 64]
         lp = None if loop is None else (int(loop * r / rate) & ~3)
         data = adpcm(x, lp)
         data += b"\0" * (-len(data) % 32)
