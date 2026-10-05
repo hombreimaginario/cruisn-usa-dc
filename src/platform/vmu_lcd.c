@@ -42,7 +42,7 @@ static const struct { char c; uint8_t col[5]; } font[] = {
     { 'N', { 0x7F, 0x04, 0x08, 0x10, 0x7F } }, { 'P', { 0x7F, 0x09, 0x09, 0x09, 0x06 } },
     { 'R', { 0x7F, 0x09, 0x19, 0x29, 0x46 } }, { 'S', { 0x46, 0x49, 0x49, 0x49, 0x31 } },
     { 'T', { 0x01, 0x01, 0x7F, 0x01, 0x01 } }, { 'U', { 0x3F, 0x40, 0x40, 0x40, 0x3F } },
-    { 'L', { 0x7F, 0x40, 0x40, 0x40, 0x40 } }, { '\'', { 0x00, 0x00, 0x07, 0x00, 0x00 } },
+    { 'L', { 0x7F, 0x40, 0x40, 0x40, 0x40 } }, { '\'', { 0x07, 0x00, 0x00, 0x00, 0x00 } },
 };
 
 static const uint8_t *glyph(char c)
@@ -71,7 +71,7 @@ static int text(int x, int y, const char *s, int scale)
                                     pix[py][px] = 1;
                             }
         }
-        x += (*s == '\'' ? 3 : 6) * scale;
+        x += (*s == '\'' ? 2 : 6) * scale;
     }
     return x;
 }
@@ -80,7 +80,7 @@ static int text_width(const char *s, int scale)
 {
     int w = 0;
     for (; *s; s++)
-        w += (*s == '\'' ? 3 : 6) * scale;
+        w += (*s == '\'' ? 2 : 6) * scale;
     return w - scale;
 }
 
