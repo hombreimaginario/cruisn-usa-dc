@@ -26,7 +26,7 @@
 #include "watchdog.h"
 
 #define MAX_POLYS   4096
-#define VERTEX_BUF  (1024 * 1024)
+#define VERTEX_BUF  (640 * 1024)
 #define TEX_SLOTS   1024
 #define SX          1.25f       /* 512 -> 640 */
 #define SY          1.2f        /* 400 -> 480 */
@@ -720,12 +720,16 @@ void pvrr_init(void)
      * en un mismo tile de 32x32. Flycast no limita nada, pero el PowerVR real
      * escribe los vertices en un bufer de tamano fijo y las listas de objetos
      * por tile (OPB) en bloques: si se desbordan, el frame sale corrupto o el
-     * TA se cuelga. Bufer de vertices de 1 MB (cabe el maximo de MAX_POLYS) y
-     * 8 bloques extra de OPB por tile de media.
+     * TA se cuelga. Bufer de vertices de 640 KB (el maximo visto en carrera
+     * son ~420 KB; ademas submit_list no se pasa) y 4 bloques extra de OPB
+     * (unas 72.000 entradas; en carrera hacen falta 7.000-14.000). Va doble,
+     * asi que cada KB de mas se lo quita a las texturas: con 1 MB y 8 bloques
+     * el bloque de texturas bajo de 5,5 a 3,9 MB y el modo demo se quedaba
+     * reconvirtiendo texturas sin parar.
      */
     pvr_init_params_t params = {
         { PVR_BINSIZE_16, PVR_BINSIZE_0, PVR_BINSIZE_16, PVR_BINSIZE_0, PVR_BINSIZE_16 },
-        VERTEX_BUF, 0, 0, 0, 8, 0
+        VERTEX_BUF, 0, 0, 0, 4, 0
     };
     pvr_init(&params);
     pvr_set_bg_color(0.0f, 0.0f, 0.0f);
