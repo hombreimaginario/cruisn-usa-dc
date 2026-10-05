@@ -57,9 +57,20 @@ static uint32_t gfx_fetch(uint32_t word)
         const char *prev = (const char *)wd_phase;
         wd_phase = "lectura de CD (ROM grafica)";
         wd_counters[WD_CD_GFX]++;
-        fs_seek(gfx_file, (off_t)page * GFX_PAGE_WORDS * 4, SEEK_SET);
-        if (fs_read(gfx_file, gfx_cache[slot], GFX_PAGE_WORDS * 4) != GFX_PAGE_WORDS * 4)
-            memset(gfx_cache[slot], 0, sizeof(gfx_cache[slot]));
+        {
+            /* si la lectura falla se reintenta (en consola real el lector
+             * puede devolver error puntual); datos a cero harian que el
+             * descompresor del juego se perdiera */
+            int tries;
+            for (tries = 0; tries < 4; tries++) {
+                fs_seek(gfx_file, (off_t)page * GFX_PAGE_WORDS * 4, SEEK_SET);
+                if (fs_read(gfx_file, gfx_cache[slot], GFX_PAGE_WORDS * 4) == GFX_PAGE_WORDS * 4)
+                    break;
+                wd_counters[WD_CD_ERR]++;
+            }
+            if (tries == 4)
+                memset(gfx_cache[slot], 0, sizeof(gfx_cache[slot]));
+        }
         gfx_tag[slot] = (int32_t)page;
         wd_phase = prev;
     }

@@ -531,8 +531,9 @@ static int upload_cpu_framebuffer(int page)
             /* estado en vivo sobre la pantalla de arranque (diagnostico en
              * consola real: si los numeros avanzan, el juego no esta parado) */
             char line[64];
-            snprintf(line, sizeof(line), "f%lu cd%lu %s", (unsigned long)wd_heartbeat,
-                     (unsigned long)wd_counters[WD_CD_GFX], (const char *)wd_phase);
+            snprintf(line, sizeof(line), "f%lu cd%lu err%lu %s", (unsigned long)wd_heartbeat,
+                     (unsigned long)wd_counters[WD_CD_GFX], (unsigned long)wd_counters[WD_CD_ERR],
+                     (const char *)wd_phase);
             memset(conv_buf + (352 - 256) * 512, 0, 24 * 512 * 2);
             bfont_draw_str(conv_buf + (352 - 256) * 512 + 8, 512, 1, line);
         }

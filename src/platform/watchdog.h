@@ -3,7 +3,7 @@
 
 #include <stdint.h>
 
-enum { WD_TA_TIMEOUT, WD_VBUF_FULL, WD_CD_GFX, WD_CD_MUSIC, WD_INTERP, WD_NCOUNT };
+enum { WD_TA_TIMEOUT, WD_VBUF_FULL, WD_CD_GFX, WD_CD_MUSIC, WD_INTERP, WD_CD_ERR, WD_NCOUNT };
 
 /* Que esta haciendo el hilo principal / los hilos de musica y VMU */
 extern volatile const char *wd_phase;

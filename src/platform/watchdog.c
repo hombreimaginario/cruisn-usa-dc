@@ -59,8 +59,9 @@ static void show(void)
     snprintf(buf, sizeof(buf), "TA agotado %lu  vertices llenos %lu",
              (unsigned long)wd_counters[WD_TA_TIMEOUT], (unsigned long)wd_counters[WD_VBUF_FULL]);
     line(r++, buf);
-    snprintf(buf, sizeof(buf), "lecturas CD graf %lu  musica %lu",
-             (unsigned long)wd_counters[WD_CD_GFX], (unsigned long)wd_counters[WD_CD_MUSIC]);
+    snprintf(buf, sizeof(buf), "lecturas CD graf %lu  musica %lu  errores %lu",
+             (unsigned long)wd_counters[WD_CD_GFX], (unsigned long)wd_counters[WD_CD_MUSIC],
+             (unsigned long)wd_counters[WD_CD_ERR]);
     line(r++, buf);
     snprintf(buf, sizeof(buf), "codigo interpretado %lu", (unsigned long)wd_counters[WD_INTERP]);
     line(r++, buf);
