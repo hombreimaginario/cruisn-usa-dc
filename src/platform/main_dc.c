@@ -26,6 +26,7 @@
 #include "sound_dc.h"
 #include "cmos_vmu.h"
 #include "watchdog.h"
+#include "version.h"
 
 #define INSNS_PER_FRAME (25000000 / 57)
 #define TICK 500

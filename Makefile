@@ -14,7 +14,10 @@ OBJS = src/platform/main_dc.o \
        src/platform/watchdog.o
 
 CUSA_VERSION := $(shell git rev-parse --short HEAD 2>/dev/null || echo local)$(shell git diff --quiet 2>/dev/null || echo +)
-KOS_CFLAGS += -DCUSA_VERSION=\"$(CUSA_VERSION)\"
+# version.h con el commit (se reescribe solo si cambia)
+$(shell echo '#define CUSA_VERSION "$(CUSA_VERSION)"' > src/platform/version.h.new; \
+        cmp -s src/platform/version.h.new src/platform/version.h || cp src/platform/version.h.new src/platform/version.h; \
+        rm -f src/platform/version.h.new)
 KOS_CFLAGS += -std=gnu99 -O2 -Wall -Wextra -DVU_NO_RAM2 -DVU_NO_UNMAPPED_LOG
 
 # Si existe el codigo recompilado (tools/c31recomp.py -> generated/recomp),
@@ -25,6 +28,8 @@ include $(RECOMP_DIR)/files.mk
 OBJS += src/recomp/rt.o src/recomp/hle.o $(RECOMP_SRCS:.c=.o)
 KOS_CFLAGS += -DCUSA_RECOMP -I$(CURDIR)/src/recomp -Wno-unused-label
 endif
+
+src/platform/main_dc.o src/platform/watchdog.o: src/platform/version.h
 
 # Bucles calientes (HLE y render): -O3 con desenrollado da ~10% mas de
 # imagenes por segundo en carrera; el resto queda en -O2 por tamano.

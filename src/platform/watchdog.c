@@ -16,6 +16,7 @@
 #include <string.h>
 
 #include "watchdog.h"
+#include "version.h"
 
 volatile const char *wd_phase = "arranque";
 volatile const char *wd_thread_phase = "-";
