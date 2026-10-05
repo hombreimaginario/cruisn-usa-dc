@@ -502,22 +502,21 @@ static void submit_list(pvr_list_t list, const draw_item *it, int n)
     }
 }
 
-static void draw_cpu_framebuffer(int page)
+/* Sube la pantalla dibujada por la CPU a una textura. Va antes de abrir las
+ * listas: pvr_txr_load usa las store queues, que dentro de una lista estan
+ * apuntando al TA. */
+static int upload_cpu_framebuffer(int page)
 {
-    pvr_poly_cxt_t cxt;
-    pvr_poly_hdr_t hdr;
-    pvr_vertex_t v;
     const uint16_t *src = &vu.video[page ? 0x40000 : 0];
     int y, x, k;
+
 
     /* textura de 512x512 tomada del bloque de texturas mientras se usa */
     if (!cpu_fb_tex) {
         while (!(cpu_fb_tex = pool_alloc(512 * 512 * 2)))
             if (!evict_one())
-                return;
+                return 0;
     }
-    static const float xs[4] = { 0, 640, 0, 640 }, ys[4] = { 0, 0, 480, 480 };
-    static const float us[4] = { 0, 1, 0, 1 };
 
     /* conversion por bloques de 128 lineas (conv_buf es de 128 KB) */
     for (y = 0; y < 400; y += 128) {
@@ -530,6 +529,18 @@ static void draw_cpu_framebuffer(int page)
         vram_guard();
         pvr_txr_load(conv_buf, (uint8_t *)cpu_fb_tex + y * 1024, rows * 1024);
     }
+    return 1;
+}
+
+static void draw_cpu_framebuffer(void)
+{
+    pvr_poly_cxt_t cxt;
+    pvr_poly_hdr_t hdr;
+    pvr_vertex_t v;
+    int k;
+    static const float xs[4] = { 0, 640, 0, 640 }, ys[4] = { 0, 0, 480, 480 };
+    static const float us[4] = { 0, 1, 0, 1 };
+
     pvr_poly_cxt_txr(&cxt, PVR_LIST_OP_POLY, PVR_TXRFMT_RGB565 | PVR_TXRFMT_NONTWIDDLED,
                      512, 512, cpu_fb_tex, PVR_FILTER_NONE);
     (void)0;
@@ -550,7 +561,7 @@ static void draw_cpu_framebuffer(int page)
 }
 
 
-static int hold_frames;
+static int hold_frames, cpu_fb_ready;
 
 static int render_page(int page, int shot)
 {
@@ -647,9 +658,11 @@ static int render_page(int page, int shot)
         pvr_scene_begin();
     }
     vbytes = 0;
+    cpu_fb_ready = n == 0 && upload_cpu_framebuffer(page);
     pvr_list_begin(PVR_LIST_OP_POLY);
     if (n == 0) {
-        draw_cpu_framebuffer(page);
+        if (cpu_fb_ready)
+            draw_cpu_framebuffer();
     } else {
         if (cpu_fb_tex) {           /* ya no hace falta: devolver al bloque */
             pool_free(cpu_fb_tex, 512 * 512 * 2);
