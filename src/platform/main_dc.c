@@ -26,6 +26,7 @@
 #include "sound_dc.h"
 #include "cmos_vmu.h"
 #include "watchdog.h"
+#include "vmu_lcd.h"
 #include "version.h"
 
 #define INSNS_PER_FRAME (25000000 / 57)
@@ -498,6 +499,7 @@ int main(int argc, char **argv)
     watchdog_start();
 #endif
     rt_interp_hook = count_interp;
+    vmu_lcd_start();
     wd_phase = "juego";
     rt_run();
 #else

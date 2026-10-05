@@ -68,6 +68,8 @@ make && make cdi
 
 El juego está siempre en juego libre (no hace falta meter monedas).
 
+La pantalla de la VMU muestra el logo en el modo demo y, en carrera, el puesto y la velocidad.
+
 Los ajustes, récords y contadores del arcade (su CMOS) se guardan solos en la primera VMU (fichero `CRUISNUS`, unos 66 bloques) cuando cambian; si no hay VMU se usa la CMOS calibrada del CD.
 
 ## Estructura

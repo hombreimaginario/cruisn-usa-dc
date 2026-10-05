@@ -262,6 +262,17 @@ void rt_platform_event(void)
         int pg = vu.page_control & 1;
         if (pg != last_page) { flips++; last_page = pg; }
         polys_acc += vu.polys_frame;
+        if (getenv("CUSA_MEMDUMP") && frame % 100 == 0) {
+            /* depuracion: volcado de la FASTRAM cada 100 frames */
+            char path[512];
+            FILE *f;
+            snprintf(path, sizeof(path), "%s/mem_%05d.bin", getenv("CUSA_MEMDUMP"), frame);
+            if ((f = fopen(path, "wb"))) {
+                fwrite(vu.fastram, 4, VU_FASTRAM_WORDS, f);
+                fwrite(vu.c31ram, 4, VU_C31_RAM_WORDS, f);
+                fclose(f);
+            }
+        }
         if (getenv("CUSA_TILESIM")) {
             if (vu.polys_frame > polys_max_s) polys_max_s = vu.polys_frame;
             tilesim_frame();

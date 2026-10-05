@@ -11,7 +11,8 @@ OBJS = src/platform/main_dc.o \
        src/platform/sound_dc.o \
        src/sound/dcs_proto.o \
        src/platform/cmos_vmu.o \
-       src/platform/watchdog.o
+       src/platform/watchdog.o \
+       src/platform/vmu_lcd.o
 
 CUSA_VERSION := $(shell git rev-parse --short HEAD 2>/dev/null || echo local)$(shell git diff --quiet 2>/dev/null || echo +)
 # version.h con el commit (se reescribe solo si cambia)
