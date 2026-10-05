@@ -18,6 +18,7 @@
 
 #include "../vunit/mem.h"
 #include "cmos_vmu.h"
+#include "watchdog.h"
 
 #define FILE_NAME "CRUISNUS"
 #define CMOS_BYTES (VU_CMOS_WORDS * 4)
@@ -94,7 +95,9 @@ static void *save_thread(void *arg)
     for (;;) {
         sem_wait(&save_sem);
         /* sin printf aqui: desde este hilo puede colgar el puerto serie */
+        wd_thread_phase = "guardando en la VMU";
         save_result = write_vmu(save_buf) ? 1 : -1;
+        wd_thread_phase = "-";
         saving = 0;
     }
     return NULL;

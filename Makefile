@@ -10,8 +10,11 @@ OBJS = src/platform/main_dc.o \
        src/platform/pvr_render.o \
        src/platform/sound_dc.o \
        src/sound/dcs_proto.o \
-       src/platform/cmos_vmu.o
+       src/platform/cmos_vmu.o \
+       src/platform/watchdog.o
 
+CUSA_VERSION := $(shell git rev-parse --short HEAD 2>/dev/null || echo local)$(shell git diff --quiet 2>/dev/null || echo +)
+KOS_CFLAGS += -DCUSA_VERSION=\"$(CUSA_VERSION)\"
 KOS_CFLAGS += -std=gnu99 -O2 -Wall -Wextra -DVU_NO_RAM2 -DVU_NO_UNMAPPED_LOG
 
 # Si existe el codigo recompilado (tools/c31recomp.py -> generated/recomp),

@@ -60,6 +60,7 @@ uint32_t rt_service(uint32_t resume_pc);      /* eventos e interrupciones */
 void     rt_reset(void);
 void     rt_run(void);                        /* no vuelve */
 uint32_t rt_unknown(uint32_t pc);
+extern void (*rt_interp_hook)(void);   /* cada instruccion interpretada */
 
 /* Lo implementa la plataforma: se llama cada RT_EVENT_PERIOD ciclos. */
 void rt_platform_event(void);

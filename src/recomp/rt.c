@@ -52,6 +52,7 @@ static int is_entry(uint32_t pc)
  * sigue en vez de abortar.
  */
 unsigned long rt_interp_steps;
+void (*rt_interp_hook)(void);
 
 uint32_t rt_unknown(uint32_t pc)
 {
@@ -99,6 +100,8 @@ uint32_t rt_unknown(uint32_t pc)
             C.r[C3X_IF] = 0;
         }
         rt_interp_steps++;
+        if (rt_interp_hook)
+            rt_interp_hook();
     }
     for (n = 0; n < C3X_NUM_REGS; n++)
         C.r[n] = ic.r[n];

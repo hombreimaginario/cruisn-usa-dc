@@ -24,6 +24,7 @@
 
 #include "sound_dc.h"
 #include "../sound/dcs_proto.h"
+#include "watchdog.h"
 
 #define entries dcs_entries
 #define nentries dcs_nentries
@@ -95,6 +96,8 @@ static void mus_fill(int half)
         }
         if (n > (uint32_t)(MUS_HALF - got))
             n = MUS_HALF - got;
+        wd_thread_phase = "lectura de CD (musica)";
+        wd_counters[WD_CD_MUSIC]++;
         fs_seek(bank_file, e->offset + mus_file_pos, SEEK_SET);
         if (fs_read(bank_file, mus_buf[half] + got, n) != (ssize_t)n)
             break;
@@ -103,6 +106,7 @@ static void mus_fill(int half)
     }
     mus_len[half] = got;
     mutex_unlock(&mus_lock);
+    wd_thread_phase = "-";
     mus_fills++;
 }
 

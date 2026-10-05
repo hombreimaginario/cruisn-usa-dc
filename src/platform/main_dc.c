@@ -25,6 +25,7 @@
 #include "pvr_render.h"
 #include "sound_dc.h"
 #include "cmos_vmu.h"
+#include "watchdog.h"
 
 #define INSNS_PER_FRAME (25000000 / 57)
 #define TICK 500
@@ -50,10 +51,14 @@ static uint32_t gfx_fetch(uint32_t word)
     uint32_t slot = page % GFX_PAGES;
 
     if (gfx_tag[slot] != (int32_t)page) {
+        const char *prev = (const char *)wd_phase;
+        wd_phase = "lectura de CD (ROM grafica)";
+        wd_counters[WD_CD_GFX]++;
         fs_seek(gfx_file, (off_t)page * GFX_PAGE_WORDS * 4, SEEK_SET);
         if (fs_read(gfx_file, gfx_cache[slot], GFX_PAGE_WORDS * 4) != GFX_PAGE_WORDS * 4)
             memset(gfx_cache[slot], 0, sizeof(gfx_cache[slot]));
         gfx_tag[slot] = (int32_t)page;
+        wd_phase = prev;
     }
     return gfx_cache[slot][word % GFX_PAGE_WORDS];
 }
@@ -266,6 +271,15 @@ static void rc_irq(int bit)
 static void vblank(void)
 {
     cusa_frame = ++frame;
+    wd_heartbeat++;
+    wd_phase = "render";
+#ifdef CUSA_WD_TEST
+    if (frame == 600) {
+        wd_phase = "prueba de cuelgue";
+        for (;;)
+            ;
+    }
+#endif
 #if defined(CUSA_SHOT) && defined(CUSA_SHOT_EVERY)
     pvrr_frame(frame >= CUSA_SHOT && (frame - CUSA_SHOT) % CUSA_SHOT_EVERY == 0);
 #elif defined(CUSA_SHOT)
@@ -299,6 +313,7 @@ static void vblank(void)
         t0 = t;
     }
     vu.polys_frame = 0;
+    wd_phase = "juego";
     rc_irq(0);
 }
 
@@ -412,6 +427,13 @@ void rt_platform_event(void)
 
 static uint64_t t_boot;
 
+#ifdef CUSA_RECOMP
+static void count_interp(void)
+{
+    wd_counters[WD_INTERP]++;
+}
+#endif
+
 int main(int argc, char **argv)
 {
     uint32_t *program;
@@ -426,6 +448,9 @@ int main(int argc, char **argv)
      * lleva unos segundos y en negro parece colgado. */
     bfont_draw_str(vram_s + 220 * 640 + 236, 640, 1, "CRUIS'N USA");
     bfont_draw_str(vram_s + 250 * 640 + 248, 640, 1, "Cargando...");
+#ifdef CUSA_VERSION
+    bfont_draw_str(vram_s + 440 * 640 + 24, 640, 1, "version " CUSA_VERSION);
+#endif
     t_boot = timer_ms_gettime64();
 #ifdef CUSA_RECOMP
     printf("Cruis'n USA DC - codigo recompilado\n");
@@ -468,6 +493,11 @@ int main(int argc, char **argv)
     prof_start();
 #endif
     t0 = timer_ms_gettime64();
+#ifndef CUSA_PROF
+    watchdog_start();
+#endif
+    rt_interp_hook = count_interp;
+    wd_phase = "juego";
     rt_run();
 #else
     vu_get_cycles = get_cycles;

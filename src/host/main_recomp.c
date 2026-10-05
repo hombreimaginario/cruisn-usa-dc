@@ -36,9 +36,73 @@ static void sound_hook(uint32_t v)
         printf("SND frame %d byte %02X\n", frame, (unsigned)v);
 }
 
+/* CUSA_GFXSIM=paginas: simula la cache de la ROM grafica de Dreamcast
+ * (paginas de 32 KB) y cuenta lecturas de CD por segundo */
+static const uint32_t *gfx_all;
+static int gfxsim_pages, gfxsim_lru;
+static int32_t gfxsim_tag[1024];
+static uint32_t gfxsim_age[1024], gfxsim_clock, gfxsim_misses, gfxsim_reads;
+static uint32_t gfxsim_fetch(uint32_t word)
+{
+    uint32_t page = word / 8192;
+    int i, victim = 0;
+    gfxsim_reads++;
+    if (gfxsim_lru) {
+        for (i = 0; i < gfxsim_pages; i++) {
+            if (gfxsim_tag[i] == (int32_t)page) {
+                gfxsim_age[i] = ++gfxsim_clock;
+                return gfx_all[word];
+            }
+            if (gfxsim_age[i] < gfxsim_age[victim])
+                victim = i;
+        }
+    } else {
+        victim = page % gfxsim_pages;
+        if (gfxsim_tag[victim] == (int32_t)page)
+            return gfx_all[word];
+    }
+    gfxsim_tag[victim] = (int32_t)page;
+    gfxsim_age[victim] = ++gfxsim_clock;
+    gfxsim_misses++;
+    return gfx_all[word];
+}
+
+/* CUSA_TILESIM: poligonos por frame y por tile de 32x32 del PowerVR
+ * (cuenta por caja envolvente, a 640x480) */
+static uint16_t tile_cnt[15][20];
+static unsigned tile_max_s, polys_max_s, offscreen_s, polys_s, frames_s, tile_sum, tile_sum_max;
+static void tilesim_poly(const uint32_t *d)
+{
+    int k, x0 = 99999, x1 = -99999, y0 = 99999, y1 = -99999, tx, ty;
+    for (k = 0; k < 4; k++) {
+        int x = (int)((int16_t)d[2 + 2 * k] * 1.25f), y = (int)((int16_t)d[3 + 2 * k] * 1.2f);
+        if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y;
+    }
+    polys_s++;
+    if (x1 < 0 || y1 < 0 || x0 >= 640 || y0 >= 480) { offscreen_s++; return; }
+    if (x0 < 0) x0 = 0; if (y0 < 0) y0 = 0; if (x1 > 639) x1 = 639; if (y1 > 479) y1 = 479;
+    for (ty = y0 / 32; ty <= y1 / 32; ty++)
+        for (tx = x0 / 32; tx <= x1 / 32; tx++)
+            tile_cnt[ty][tx]++, tile_sum++;
+}
+static void tilesim_frame(void)
+{
+    int tx, ty;
+    unsigned m = 0;
+    for (ty = 0; ty < 15; ty++)
+        for (tx = 0; tx < 20; tx++)
+            if (tile_cnt[ty][tx] > m) m = tile_cnt[ty][tx];
+    if (m > tile_max_s) tile_max_s = m;
+    if (tile_sum > tile_sum_max) tile_sum_max = tile_sum;
+    tile_sum = 0;
+    memset(tile_cnt, 0, sizeof(tile_cnt));
+}
+
 static unsigned poly_ctrl_hist[256], poly_base_max, poly_pal_max;
 static void stats_hook(const uint32_t *d, int page)
 {
+    (void)page;
+    tilesim_poly(d);
     poly_ctrl_hist[(d[0] >> 8) & 0xFF]++;
     if (frame == 1299 && (int16_t)d[3] > 300 && (int16_t)d[2] > 150 && (int16_t)d[2] < 360)
         printf("  poli ctrl=%04X pal=%02X base=%04X uv=%04X %04X %04X %04X xy=%d,%d\n", (unsigned)d[0], (unsigned)(d[1] >> 8),
@@ -198,6 +262,20 @@ void rt_platform_event(void)
         int pg = vu.page_control & 1;
         if (pg != last_page) { flips++; last_page = pg; }
         polys_acc += vu.polys_frame;
+        if (getenv("CUSA_TILESIM")) {
+            if (vu.polys_frame > polys_max_s) polys_max_s = vu.polys_frame;
+            tilesim_frame();
+            if (frame % 57 == 0) {
+                printf("frame %d: max %u polis/frame, max %u en un tile, %u entradas tile/frame, %u de %u fuera de pantalla\n",
+                       frame, polys_max_s, tile_max_s, tile_sum_max, offscreen_s, polys_s);
+                tile_max_s = polys_max_s = offscreen_s = polys_s = tile_sum_max = 0;
+            }
+        }
+        if (gfxsim_pages && frame % 57 == 0) {
+            if (gfxsim_misses)
+                printf("frame %d: %u lecturas de pagina de CD (%u accesos)\n", frame, gfxsim_misses, gfxsim_reads);
+            gfxsim_misses = gfxsim_reads = 0;
+        }
         if (getenv("CUSA_FLIPS") && frame % 57 == 0) {
             printf("frame %d flips=%d polis=%d\n", frame, flips, polys_acc);
             flips = 0;
@@ -289,13 +367,21 @@ int main(int argc, char **argv)
     vu_get_pc = get_pc;
     vu_raise_irq = raise_irq;
     vu_reset(program, gfx);
+    if (getenv("CUSA_GFXSIM")) {
+        gfxsim_pages = atoi(getenv("CUSA_GFXSIM"));
+        gfxsim_lru = getenv("CUSA_GFXSIM_LRU") != NULL;
+        memset(gfxsim_tag, 0xFF, sizeof(gfxsim_tag));
+        gfx_all = gfx;
+        vu.gfx = NULL;
+        vu_gfx_fetch = gfxsim_fetch;
+    }
     vu_skip_memtests();
     cm = load_file(gdir, "cmos.bin", &n);
     if (cm && n == sizeof(vu.cmos))
         memcpy(vu.cmos, cm, n);
     free(cm);
 
-    if (getenv("CUSA_POLYSTATS"))
+    if (getenv("CUSA_POLYSTATS") || getenv("CUSA_TILESIM"))
         vu_poly_hook = stats_hook;
     /* CUSA_SOUNDLOG: registra los bytes; CUSA_SOUNDWAV=fichero.wav: mezcla lo
      * que sonaria en Dreamcast con generated/sound.bin */

@@ -23,8 +23,10 @@
 
 #include "../vunit/mem.h"
 #include "pvr_render.h"
+#include "watchdog.h"
 
 #define MAX_POLYS   4096
+#define VERTEX_BUF  (1024 * 1024)
 #define TEX_SLOTS   1024
 #define SX          1.25f       /* 512 -> 640 */
 #define SY          1.2f        /* 400 -> 480 */
@@ -159,7 +161,7 @@ static uint32_t frame_no;
 static uint16_t conv_buf[256 * 256] __attribute__((aligned(32)));
 static pvr_ptr_t cpu_fb_tex, shot_tex;
 
-static unsigned stat_conv, stat_polys, stat_skipped, stat_pages, stat_why[4];
+static unsigned stat_conv, stat_polys, stat_skipped, stat_pages, stat_why[4], stat_ta_timeouts;
 static uint64_t t_tex, t_wait, t_sub;
 static unsigned conv_this_frame;
 #define MAX_CONV_PER_FRAME 400
@@ -194,6 +196,28 @@ static int evict_one(void)
         return 1;
     }
     return 0;
+}
+
+/*
+ * El PowerVR dibuja el frame anterior mientras la CPU prepara el siguiente.
+ * Antes de escribir en la VRAM de texturas (texturas nuevas, reconvertidas o
+ * en el hueco de otra expulsada) hay que esperar a que termine de dibujar:
+ * si no, el frame en curso sale con texturas de otro objeto (en hardware
+ * real; Flycast dibuja al instante y no se nota).
+ */
+static uint32_t guarded_frame;
+static uint64_t t_rwait;
+
+static void vram_guard(void)
+{
+    if (guarded_frame != frame_no) {
+        uint64_t t = timer_us_gettime64();
+        wd_phase = "PowerVR: esperando fin de dibujo";
+        pvr_wait_render_done();
+        wd_phase = "render";
+        t_rwait += timer_us_gettime64() - t;
+        guarded_frame = frame_no;
+    }
 }
 
 static int convert(tex_entry *t, const tex_req *r, uint32_t pixdata)
@@ -238,6 +262,7 @@ static int convert(tex_entry *t, const tex_req *r, uint32_t pixdata)
             }
         }
     }
+    vram_guard();
     pvr_txr_load(conv_buf, t->ptr, n * 2);
     stat_conv++;
     return 1;
@@ -404,6 +429,9 @@ static draw_item items[3][MAX_POLYS];   /* opaca, punch-through, tramada */
 static draw_item unsorted[MAX_POLYS];
 static uint16_t seq_count[3][MAX_POLYS + 1];
 
+static uint32_t vbytes;                /* bytes enviados al TA este frame */
+static unsigned stat_vfull;
+
 static void submit_list(pvr_list_t list, const draw_item *it, int n)
 {
     int i, k;
@@ -416,6 +444,12 @@ static void submit_list(pvr_list_t list, const draw_item *it, int n)
     for (i = 0; i < n; i++, it++) {
         const uint32_t *d = it->d;
         tex_entry *t = it->t;
+        /* no pasarse del bufer de vertices (cabecera + 4 vertices) */
+        if (vbytes + 5 * 32 > VERTEX_BUF - 4096) {
+            stat_vfull++;
+            wd_counters[WD_VBUF_FULL]++;
+            break;
+        }
         uint32_t argb = 0xFFFFFFFFu;
         float uo = 0, vo = 0, iw = 0, ih = 0, z = it->z;
 
@@ -440,6 +474,7 @@ static void submit_list(pvr_list_t list, const draw_item *it, int n)
             hp = pvr_dr_target();
             *hp = hdr;
             pvr_dr_commit(hp);
+            vbytes += 32;
             cur = t;
             cur_col = argb;
         }
@@ -462,6 +497,7 @@ static void submit_list(pvr_list_t list, const draw_item *it, int n)
             v->oargb = 0;
             pvr_dr_commit(v);
         }
+        vbytes += 4 * 32;
         stat_polys++;
     }
 }
@@ -491,6 +527,7 @@ static void draw_cpu_framebuffer(int page)
                 uint16_t c = vu.coloram[src[(y + k) * 512 + x] & 0x7FFF];
                 conv_buf[k * 512 + x] = (uint16_t)(((c & 0x7FE0) << 1) | (c & 0x1F));
             }
+        vram_guard();
         pvr_txr_load(conv_buf, (uint8_t *)cpu_fb_tex + y * 1024, rows * 1024);
     }
     pvr_poly_cxt_txr(&cxt, PVR_LIST_OP_POLY, PVR_TXRFMT_RGB565 | PVR_TXRFMT_NONTWIDDLED,
@@ -591,7 +628,12 @@ static int render_page(int page, int shot)
     }
     hold_frames = 0;
 
-    pvr_wait_ready();
+    wd_phase = "PowerVR: esperando al TA";
+    if (pvr_wait_ready() < 0) {
+        stat_ta_timeouts++;
+        wd_counters[WD_TA_TIMEOUT]++;
+    }
+    wd_phase = "PowerVR: enviando poligonos";
     tc = timer_us_gettime64();
     t_wait += tc - tb;
     if (shot && !shot_tex) {
@@ -604,6 +646,7 @@ static int render_page(int page, int shot)
     } else {
         pvr_scene_begin();
     }
+    vbytes = 0;
     pvr_list_begin(PVR_LIST_OP_POLY);
     if (n == 0) {
         draw_cpu_framebuffer(page);
@@ -672,9 +715,17 @@ static void dump_shot(void)
 
 void pvrr_init(void)
 {
+    /*
+     * En carrera hay hasta ~3000 poligonos por frame y hasta varios cientos
+     * en un mismo tile de 32x32. Flycast no limita nada, pero el PowerVR real
+     * escribe los vertices en un bufer de tamano fijo y las listas de objetos
+     * por tile (OPB) en bloques: si se desbordan, el frame sale corrupto o el
+     * TA se cuelga. Bufer de vertices de 1 MB (cabe el maximo de MAX_POLYS) y
+     * 8 bloques extra de OPB por tile de media.
+     */
     pvr_init_params_t params = {
         { PVR_BINSIZE_16, PVR_BINSIZE_0, PVR_BINSIZE_16, PVR_BINSIZE_0, PVR_BINSIZE_16 },
-        512 * 1024, 0, 0, 0, 3, 0
+        VERTEX_BUF, 0, 0, 0, 8, 0
     };
     pvr_init(&params);
     pvr_set_bg_color(0.0f, 0.0f, 0.0f);
@@ -732,9 +783,13 @@ unsigned pvrr_pages(void)
 
 void pvrr_stats(unsigned *conv, unsigned *polys)
 {
-    printf("  render: texturas %u ms, espera %u ms, envio %u ms, omitidos %u (huecos %u, limite %u/%u, vram %u)\n",
-           (unsigned)(t_tex / 1000), (unsigned)(t_wait / 1000), (unsigned)(t_sub / 1000), stat_skipped,
-           stat_why[0], stat_why[1], stat_why[2], stat_why[3]);
+    printf("  render: texturas %u ms, espera TA %u ms (%u agotadas), espera dibujo %u ms, envio %u ms, omitidos %u (huecos %u, limite %u/%u, vram %u)\n",
+           (unsigned)(t_tex / 1000), (unsigned)(t_wait / 1000), stat_ta_timeouts, (unsigned)(t_rwait / 1000),
+           (unsigned)(t_sub / 1000), stat_skipped, stat_why[0], stat_why[1], stat_why[2], stat_why[3]);
+    if (stat_vfull)
+        printf("  render: bufer de vertices lleno %u veces\n", stat_vfull);
+    stat_ta_timeouts = stat_vfull = 0;
+    t_rwait = 0;
     memset(stat_why, 0, sizeof(stat_why));
     stat_skipped = 0;
     t_tex = t_wait = t_sub = 0;
