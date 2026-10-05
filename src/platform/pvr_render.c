@@ -16,6 +16,7 @@
  */
 #include <kos.h>
 #include <dc/pvr.h>
+#include <dc/biosfont.h>
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -526,6 +527,15 @@ static int upload_cpu_framebuffer(int page)
                 uint16_t c = vu.coloram[src[(y + k) * 512 + x] & 0x7FFF];
                 conv_buf[k * 512 + x] = (uint16_t)(((c & 0x7FE0) << 1) | (c & 0x1F));
             }
+        if (y == 256) {
+            /* estado en vivo sobre la pantalla de arranque (diagnostico en
+             * consola real: si los numeros avanzan, el juego no esta parado) */
+            char line[64];
+            snprintf(line, sizeof(line), "f%lu cd%lu %s", (unsigned long)wd_heartbeat,
+                     (unsigned long)wd_counters[WD_CD_GFX], (const char *)wd_phase);
+            memset(conv_buf + (352 - 256) * 512, 0, 24 * 512 * 2);
+            bfont_draw_str(conv_buf + (352 - 256) * 512 + 8, 512, 1, line);
+        }
         vram_guard();
         pvr_txr_load(conv_buf, (uint8_t *)cpu_fb_tex + y * 1024, rows * 1024);
     }
@@ -652,13 +662,14 @@ static int render_page(int page, int shot)
             if (!evict_one())
                 break;
     }
+    /* la textura de la pantalla de la CPU se sube antes de empezar el frame */
+    cpu_fb_ready = n == 0 && upload_cpu_framebuffer(page);
     if (shot && shot_tex) {
         pvr_scene_begin_rtt(shot_tex, 640, 480, 640);
     } else {
         pvr_scene_begin();
     }
     vbytes = 0;
-    cpu_fb_ready = n == 0 && upload_cpu_framebuffer(page);
     pvr_list_begin(PVR_LIST_OP_POLY);
     if (n == 0) {
         if (cpu_fb_ready)

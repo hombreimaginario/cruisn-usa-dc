@@ -24,6 +24,15 @@ static clock_t t_start;
 /* CUSA_SOUNDLOG: decodifica el protocolo del puerto de sonido (bytes con
  * estrobo 0xFDxx) y registra los codigos de 16 bits enviados. */
 static int sound_log, sound_wav;
+/* CUSA_WHEELLOG: fuerza que el juego manda al volante con motor (byte con signo) */
+static void wheel_hook(uint32_t v)
+{
+    static int addr;
+    if ((v >> 8) == 0xF7)
+        addr = v & 0xFF;
+    else if ((v >> 8) == 0xFB && addr == 4)
+        printf("WHEEL frame %d %d\n", frame, (int8_t)(v & 0xFF));
+}
 static void sound_hook(uint32_t v)
 {
     if (sound_wav)
@@ -404,6 +413,8 @@ int main(int argc, char **argv)
     }
     if (sound_log || sound_wav)
         vu_sound_hook = sound_hook;
+    if (getenv("CUSA_WHEELLOG"))
+        vu_wheel_hook = wheel_hook;
     if (getenv("CUSA_COVERAGE"))
         c3x_cov = calloc(0x1000000, 1);
     rt_reset();

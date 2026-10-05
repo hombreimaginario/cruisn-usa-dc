@@ -156,6 +156,9 @@ static void *lcd_thread(void *arg)
 {
     int last_kind = -1, last_pos = -1, last_mph = -1;
     (void)arg;
+    /* no tocar el bus maple durante el arranque: esperar al modo demo */
+    while ((vu.fastram[ADDR_MODE] & 0xF) != 2 && (vu.fastram[ADDR_MODE] & 0xF) != 4)
+        thd_sleep(500);
     for (;;) {
         uint32_t mode = vu.fastram[ADDR_MODE] & 0xF;
         int kind = (mode == 4) ? 1 : 0;

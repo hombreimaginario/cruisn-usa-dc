@@ -83,11 +83,15 @@ static void track_stop(int track)
     be->stop(track);
 }
 
+void (*dcs_code_hook)(int code);
+
 static void play_code(int code)
 {
     int idx, track, vol;
     const snd_entry *e;
 
+    if (dcs_code_hook)
+        dcs_code_hook(code);
     if (code == 0) {
         int t;
         for (t = 0; t < DCS_NTRACKS; t++)

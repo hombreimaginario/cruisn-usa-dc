@@ -54,6 +54,8 @@ int dcs_parse_header(const uint8_t *hdr16);
 /* Tras rellenar dcs_entries: indices por codigo y muestras de motor.
  * usable(i) dice si la entrada i se pudo cargar (NULL = todas). */
 void dcs_proto_init(const dcs_backend *be, int (*usable)(int entry));
+/* Se llama con cada codigo de sonido que pide el juego (vibracion, etc.) */
+extern void (*dcs_code_hook)(int code);
 /* Byte del puerto del DCS, o 0x100 | bit para la linea de reset */
 void dcs_proto_write(uint32_t v);
 
