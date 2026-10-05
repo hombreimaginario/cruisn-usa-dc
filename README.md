@@ -51,7 +51,7 @@ source $KOS_BASE/environ.sh
 make && make cdi
 ```
 
-`make cdi` mete en el CD `program.bin`, `gfx.bin`, `cmos.bin` y, si existe, `sound.bin` (el banco de sonido, ver [docs/SONIDO.md](docs/SONIDO.md)).
+`make cdi` crea `cruisn-usa-dc-<commit>.cdi` y mete en el CD `program.bin`, `gfx.bin`, `cmos.bin` y, si existe, `sound.bin` (el banco de sonido, ver [docs/SONIDO.md](docs/SONIDO.md)).
 
 ## Controles (mando de Dreamcast)
 

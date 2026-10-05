@@ -52,10 +52,11 @@ run: $(TARGET)
 	$(KOS_LOADER) $(TARGET)
 
 # Imagen de CD con los datos generados por tools/romtool.py (no se versiona).
+# El nombre lleva el commit (cruisn-usa-dc-<commit>.cdi) para distinguir versiones.
 MKDCDISC ?= mkdcdisc
 GENERATED ?= generated
 cdi: $(TARGET)
-	$(MKDCDISC) -e $(TARGET) -o cruisn-usa-dc.cdi --allow-overwrite -n "CRUISN USA DC" \
+	$(MKDCDISC) -e $(TARGET) -o cruisn-usa-dc-$(CUSA_VERSION).cdi --allow-overwrite -n "CRUISN USA DC" \
 		-f $(GENERATED)/program.bin -f $(GENERATED)/gfx.bin \
 		$(if $(wildcard $(GENERATED)/cmos.bin),-f $(GENERATED)/cmos.bin) \
 		$(if $(wildcard $(GENERATED)/sound.bin),-f $(GENERATED)/sound.bin)
