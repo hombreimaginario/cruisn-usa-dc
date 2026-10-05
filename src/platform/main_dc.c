@@ -27,6 +27,7 @@
 #include "cmos_vmu.h"
 #include "watchdog.h"
 #include "vmu_lcd.h"
+#include "rumble.h"
 #include "version.h"
 
 #define INSNS_PER_FRAME (25000000 / 57)
@@ -500,6 +501,7 @@ int main(int argc, char **argv)
 #endif
     rt_interp_hook = count_interp;
     vmu_lcd_start();
+    rumble_start();
     wd_phase = "juego";
     rt_run();
 #else
