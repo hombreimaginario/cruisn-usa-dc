@@ -440,6 +440,26 @@ void rt_platform_event(void)
 #endif
 
 static uint64_t t_boot;
+static int boot_line;
+
+/* Pasos del arranque en la pantalla de carga: si algo se cuelga antes de
+ * que el PowerVR tome la pantalla, en la consola se ve donde. */
+static void boot_step(const char *s)
+{
+    char buf[64];
+    snprintf(buf, sizeof(buf), "%-30s", s);
+    bfont_draw_str(vram_s + (290 + boot_line * 26) * 640 + 120, 640, 1, buf);
+    if (boot_line < 5)
+        boot_line++;
+    printf("arranque: %s (%u ms)\n", s, (unsigned)(timer_ms_gettime64() - t_boot));
+}
+
+static void boot_fail(const char *s)
+{
+    boot_step(s);
+    for (;;)
+        thd_sleep(1000);
+}
 
 #ifdef CUSA_RECOMP
 static void count_interp(void)
@@ -472,11 +492,10 @@ int main(int argc, char **argv)
     printf("Cruis'n USA DC - interprete de referencia\n");
 #endif
 
+    boot_step("leyendo programa");
     program = load_file("/cd/program.bin", &n);
-    if (!program || n != VU_PROGRAM_WORDS * 4) {
-        printf("falta /cd/program.bin (genera con tools/romtool.py)\n");
-        return 1;
-    }
+    if (!program || n != VU_PROGRAM_WORDS * 4)
+        boot_fail(program ? "program.bin: tamano incorrecto" : "no se pudo leer program.bin");
     gfx_file = fs_open("/cd/gfx.bin", O_RDONLY);
     if (gfx_file == FILEHND_INVALID)
         printf("aviso: falta /cd/gfx.bin, no habra texturas\n");
@@ -485,19 +504,22 @@ int main(int argc, char **argv)
     vu_gfx_fetch = gfx_file != FILEHND_INVALID ? gfx_fetch : NULL;
     vu_reset(program, NULL);
 
+    boot_step("leyendo CMOS / VMU");
     cmos = load_file("/cd/cmos.bin", &n);
     cmos_init(cmos, cmos ? n : 0);
     free(cmos);
 
 #ifdef CUSA_RECOMP
-    printf("arranque: programa y CMOS en %u ms\n", (unsigned)(timer_ms_gettime64() - t_boot));
+    /* el sonido antes que el PowerVR: mientras no se inicia el PowerVR la
+     * pantalla de carga sigue visible */
+    boot_step("cargando sonido");
+    if (sound_init("/cd/sound.bin") == 0)
+        vu_sound_hook = sound_dcs_write;
+    boot_step("iniciando PowerVR");
     pvrr_init();
 #ifdef CUSA_SHOT
     pvrr_reserve_shot();
 #endif
-    if (sound_init("/cd/sound.bin") == 0)
-        vu_sound_hook = sound_dcs_write;
-    printf("arranque: sonido cargado a los %u ms\n", (unsigned)(timer_ms_gettime64() - t_boot));
     vu_get_cycles = rc_cycles;
     vu_get_pc = rc_pc;
     vu_raise_irq = rc_irq;
@@ -511,8 +533,10 @@ int main(int argc, char **argv)
     watchdog_start();
 #endif
     rt_interp_hook = count_interp;
+#ifndef CUSA_MINIMAL
     vmu_lcd_start();
     rumble_start();
+#endif
     wd_phase = "juego";
     rt_run();
 #else

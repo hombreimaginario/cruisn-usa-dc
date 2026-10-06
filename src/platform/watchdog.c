@@ -37,9 +37,11 @@ static void show(void)
     const irq_context_t *m = main_thread ? &main_thread->context : NULL;
     int r = 0;
 
-    /* fondo negro y la pantalla de la CPU visible encima del PowerVR */
+    /* se vuelve a poner el modo de video: el PowerVR deja de mostrarse y la
+     * pantalla pasa a ser vram_s (con vid_set_start el PowerVR la recuperaba) */
+    if (!shown)
+        vid_set_mode(DM_640x480, PM_RGB565);
     memset(vram_s, 0, 640 * 480 * 2);
-    vid_set_start(0);
 #ifdef CUSA_VERSION
     line(r++, "CRUIS'N USA DC " CUSA_VERSION " - EL JUEGO NO RESPONDE");
 #else
