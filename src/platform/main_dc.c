@@ -26,6 +26,7 @@
 #include "sound_dc.h"
 #include "cmos_vmu.h"
 #include "watchdog.h"
+#include "textfont.h"
 #include "vmu_lcd.h"
 #include "rumble.h"
 #include "version.h"
@@ -448,7 +449,7 @@ static void boot_step(const char *s)
 {
     char buf[64];
     snprintf(buf, sizeof(buf), "%-30s", s);
-    bfont_draw_str(vram_s + (290 + boot_line * 26) * 640 + 120, 640, 1, buf);
+    tf_draw((uint16_t *)vram_s + (290 + boot_line * 26) * 640 + 120, 640, buf, 0xFFFF, 0x0000);
     if (boot_line < 5)
         boot_line++;
     printf("arranque: %s (%u ms)\n", s, (unsigned)(timer_ms_gettime64() - t_boot));
@@ -478,12 +479,13 @@ int main(int argc, char **argv)
 
     vid_set_mode(DM_640x480, PM_RGB565);
     vid_clear(0, 0, 0);
+    tf_init();                          /* antes de cualquier lectura del CD */
     /* Pantalla de carga: leer el programa, el sonido y arrancar el juego
      * lleva unos segundos y en negro parece colgado. */
-    bfont_draw_str(vram_s + 220 * 640 + 236, 640, 1, "CRUIS'N USA");
-    bfont_draw_str(vram_s + 250 * 640 + 248, 640, 1, "Cargando...");
+    tf_draw((uint16_t *)vram_s + 220 * 640 + 236, 640, "CRUIS'N USA", 0xFFFF, 0x0000);
+    tf_draw((uint16_t *)vram_s + 250 * 640 + 248, 640, "Cargando...", 0xFFFF, 0x0000);
 #ifdef CUSA_VERSION
-    bfont_draw_str(vram_s + 440 * 640 + 24, 640, 1, "version " CUSA_VERSION);
+    tf_draw((uint16_t *)vram_s + 440 * 640 + 24, 640, "version " CUSA_VERSION, 0xFFFF, 0x0000);
 #endif
     t_boot = timer_ms_gettime64();
 #ifdef CUSA_RECOMP

@@ -16,6 +16,7 @@
 #include <string.h>
 
 #include "watchdog.h"
+#include "textfont.h"
 #include "version.h"
 
 volatile const char *wd_phase = "arranque";
@@ -28,7 +29,7 @@ static uint32_t last_beat, stale_ticks, shown;
 
 static void line(int row, const char *s)
 {
-    bfont_draw_str(vram_s + (40 + row * 26) * 640 + 24, 640, 1, s);
+    tf_draw((uint16_t *)vram_s + (40 + row * 26) * 640 + 24, 640, s, 0xFFFF, 0x0000);
 }
 
 static void show(void)

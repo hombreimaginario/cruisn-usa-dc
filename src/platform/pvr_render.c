@@ -25,6 +25,7 @@
 #include "../vunit/mem.h"
 #include "pvr_render.h"
 #include "watchdog.h"
+#include "textfont.h"
 
 #define MAX_POLYS   4096
 #define VERTEX_BUF  (640 * 1024)
@@ -411,6 +412,15 @@ static void on_poly(const uint32_t *d, int page)
         restart_pending[page] = 0;
         page_npolys[page] = 0;
     }
+    {
+        /* fuera de la pantalla de 512x400 por completo: no se guarda (entre
+         * un 5 y un 10 % en carretera: cielo y suelo en tiras de 256) */
+        int16_t x0 = (int16_t)d[2], x1 = (int16_t)d[4], x2 = (int16_t)d[6], x3 = (int16_t)d[8];
+        int16_t y0 = (int16_t)d[3], y1 = (int16_t)d[5], y2 = (int16_t)d[7], y3 = (int16_t)d[9];
+        if ((x0 < 0 && x1 < 0 && x2 < 0 && x3 < 0) || (x0 >= 512 && x1 >= 512 && x2 >= 512 && x3 >= 512) ||
+            (y0 < 0 && y1 < 0 && y2 < 0 && y3 < 0) || (y0 >= 400 && y1 >= 400 && y2 >= 400 && y3 >= 400))
+            return;
+    }
     if (page_npolys[page] < MAX_POLYS)
         memcpy(page_polys[page][page_npolys[page]++].d, d, sizeof(packet));
 }
@@ -535,7 +545,7 @@ static int upload_cpu_framebuffer(int page)
                      (unsigned long)wd_counters[WD_CD_GFX], (unsigned long)wd_counters[WD_CD_ERR],
                      (const char *)wd_phase);
             memset(conv_buf + (352 - 256) * 512, 0, 24 * 512 * 2);
-            bfont_draw_str(conv_buf + (352 - 256) * 512 + 8, 512, 1, line);
+            tf_draw((uint16_t *)conv_buf + (352 - 256) * 512 + 8, 512, line, 0xFFFF, 0x0000);
         }
         vram_guard();
         pvr_txr_load(conv_buf, (uint8_t *)cpu_fb_tex + y * 1024, rows * 1024);
