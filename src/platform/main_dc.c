@@ -18,6 +18,7 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <malloc.h>
 #include <string.h>
 
 #include "../c3x/c3x.h"
@@ -282,6 +283,9 @@ static void rc_irq(int bit)
     RT_FORCE_CHECK();
 }
 
+static uint64_t idle_us;               /* tiempo esperando la interrupcion */
+static unsigned vbl_hist[5];
+
 /* Lo que pasa en cada interrupcion de video (INT0, 57 por segundo) */
 static void vblank(void)
 {
@@ -316,6 +320,10 @@ static void vblank(void)
 #endif
     if (frame % 57 == 0) {
         uint64_t t = timer_ms_gettime64();
+#ifdef STATS_EVERY
+        if (frame % STATS_EVERY)
+            goto no_stats;
+#endif
 #ifdef CUSA_CMOS_TEST
         if (frame == 570)
             vu.cmos[7] ^= 0x5A;         /* fuerza un guardado (prueba) */
@@ -323,9 +331,18 @@ static void vblank(void)
         cmos_check();
         unsigned conv, drawn, pages = pvrr_pages();
         pvrr_stats(&conv, &drawn);
-        printf("frame %d polis=%u dibujados=%u texturas=%u imagenes=%u  %u ms por segundo de juego\n",
-               frame, (unsigned)vu.polys_frame, drawn, conv, pages, (unsigned)(t - t0));
+#ifdef CUSA_STATS
+        printf("frame %d polis=%u dibujados=%u texturas=%u imagenes=%u  %u ms por segundo de juego, %u ms libres\n",
+               frame, (unsigned)vu.polys_frame, drawn, conv, pages, (unsigned)(t - t0), (unsigned)(idle_us / 1000));
+        printf("  interrupciones por imagen: 1:%u 2:%u 3:%u 4:%u 5+:%u\n",
+               vbl_hist[0], vbl_hist[1], vbl_hist[2], vbl_hist[3], vbl_hist[4]);
+#endif
+        idle_us = 0;
+        memset(vbl_hist, 0, sizeof(vbl_hist));
         t0 = t;
+#ifdef STATS_EVERY
+no_stats:;
+#endif
     }
     vu.polys_frame = 0;
     wd_phase = "juego";
@@ -384,6 +401,9 @@ static uint64_t next_vbl_us;
  * tiempo real (en la carrera de prueba, 22-28 imagenes por segundo).
  */
 #define NFRAMES_MAX 3
+#ifndef VBL_HOLD_US
+#define VBL_HOLD_US 8000
+#endif
 static int vbl_since_flip, last_flip_page = -1;
 
 static void vblank_due(uint64_t now)
@@ -394,6 +414,7 @@ static void vblank_due(uint64_t now)
     vblank();
     if ((vu.page_control & 1) != last_flip_page) {
         last_flip_page = vu.page_control & 1;
+        vbl_hist[vbl_since_flip < 4 ? vbl_since_flip : 4]++;
         vbl_since_flip = 0;
     } else {
         vbl_since_flip++;
@@ -414,9 +435,13 @@ void rt_platform_idle(void)
     now = timer_us_gettime64();
     if (!next_vbl_us)
         next_vbl_us = now + VBL_US;
-    while (now < next_vbl_us) {
-        thd_pass();
-        now = timer_us_gettime64();
+    {
+        uint64_t t = now;
+        while (now < next_vbl_us) {
+            thd_pass();
+            now = timer_us_gettime64();
+        }
+        idle_us += now - t;
     }
     vblank_due(now);
 }
@@ -434,6 +459,12 @@ void rt_platform_event(void)
     /* con el juego ocupado, la ultima interrupcion permitida se guarda hasta
      * que espere (salvo que lleve mucho sin esperar: bucles no detectados) */
     if (vbl_since_flip >= NFRAMES_MAX - 1 && now < next_vbl_us + 4 * VBL_US)
+        return;
+    /* La segunda interrupcion del frame se puede retrasar un poco si el
+     * juego esta a punto de terminar: asi un frame de 36 ms no espera a la
+     * tercera (52 ms, 19 imagenes por segundo). El calendario no cambia, asi
+     * que el juego sigue a su velocidad. */
+    if (vbl_since_flip == 0 && now < next_vbl_us + VBL_HOLD_US)
         return;
     vblank_due(now);
 }
@@ -517,6 +548,11 @@ int main(int argc, char **argv)
     boot_step("cargando sonido");
     if (sound_init("/cd/sound.bin") == 0)
         vu_sound_hook = sound_dcs_write;
+    {
+        struct mallinfo mi = mallinfo();
+        printf("memoria: %d KB usados en el monticulo, %d KB libres en bloques\n",
+               mi.uordblks / 1024, mi.fordblks / 1024);
+    }
     boot_step("iniciando PowerVR");
     pvrr_init();
 #ifdef CUSA_SHOT

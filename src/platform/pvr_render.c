@@ -455,6 +455,8 @@ static void submit_list(pvr_list_t list, const draw_item *it, int n)
     for (i = 0; i < n; i++, it++) {
         const uint32_t *d = it->d;
         tex_entry *t = it->t;
+        if (i + 4 < n)
+            __builtin_prefetch(it[4].d);
         /* no pasarse del bufer de vertices (cabecera + 4 vertices) */
         if (vbytes + 5 * 32 > VERTEX_BUF - 4096) {
             stat_vfull++;
@@ -597,9 +599,14 @@ static int render_page(int page, int shot)
         /* textura de cada poligono y numero de orden por textura */
         uint16_t nseq[3] = { 1, 1, 1 };
         int l, total[3] = { 0, 0, 0 };
-        memset(seq_count, 0, sizeof(seq_count));
+        static uint16_t used[3];
+        /* solo se limpia lo que se uso en el frame anterior */
+        for (l = 0; l < 3; l++)
+            memset(seq_count[l], 0, (used[l] + 1u) * sizeof(seq_count[l][0]));
         for (i = 0; i < n; i++) {
             const uint32_t *d = page_polys[page][i].d;
+            if (i + 4 < n)
+                __builtin_prefetch(page_polys[page][i + 4].d);
             tex_entry *t = NULL;
             uint16_t sq = 0;
             l = 0;
@@ -644,6 +651,8 @@ static int render_page(int page, int shot)
                 items[l][seq_count[l][t ? t->seq : 0]++] = unsorted[i];
             }
         }
+        for (l = 0; l < 3; l++)
+            used[l] = nseq[l];
         n_op = total[0];
         n_pt = total[1];
         n_tr = total[2];
@@ -822,11 +831,13 @@ unsigned pvrr_pages(void)
 
 void pvrr_stats(unsigned *conv, unsigned *polys)
 {
+#ifdef CUSA_STATS
     printf("  render: texturas %u ms, espera TA %u ms (%u agotadas), espera dibujo %u ms, envio %u ms, omitidos %u (huecos %u, limite %u/%u, vram %u)\n",
            (unsigned)(t_tex / 1000), (unsigned)(t_wait / 1000), stat_ta_timeouts, (unsigned)(t_rwait / 1000),
            (unsigned)(t_sub / 1000), stat_skipped, stat_why[0], stat_why[1], stat_why[2], stat_why[3]);
     if (stat_vfull)
         printf("  render: bufer de vertices lleno %u veces\n", stat_vfull);
+#endif
     stat_ta_timeouts = stat_vfull = 0;
     t_rwait = 0;
     memset(stat_why, 0, sizeof(stat_why));

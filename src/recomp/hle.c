@@ -197,39 +197,31 @@ static inline void setf(int n, float x)
 /* Conversion C3x -> IEEE en linea (la de c3x.h no siempre se expande). */
 static inline __attribute__((always_inline)) float c2f(uint32_t v)
 {
-    union { uint32_t u; float f; } o;
+    return c3x_to_float(v);
+}
+
+/* FIX (parte entera hacia abajo) directamente del formato C3x, sin pasar
+ * por flotante: mantisa en complemento a dos desplazada por el exponente.
+ * Igual que fixf(c2f(v)) salvo en desnormales negativos (el C31 da -1). */
+static inline __attribute__((always_inline)) uint32_t fixc(uint32_t v)
+{
     int32_t e = (int8_t)(v >> 24);
-    uint32_t frac = v & 0x7FFFFFu;
-    if (e + 127 <= 0)
-        return 0.0f;
-    if (!(v & 0x800000u)) {
-        o.u = ((uint32_t)(e + 127) << 23) | frac;
-    } else if (frac == 0) {
-        if (e + 128 >= 255)
-            o.u = 0xFF7FFFFFu;
-        else
-            o.u = 0x80000000u | ((uint32_t)(e + 128) << 23);
-    } else {
-        o.u = 0x80000000u | ((uint32_t)(e + 127) << 23) | (0x800000u - frac);
+    int32_t m = ((int32_t)(v << 8) >> 8) ^ 0x800000;  /* (1 + f) o (-2 + f), 2^23 = 1 */
+    if (LIKELY(e <= 23)) {
+        int32_t sh = 23 - e;
+        if (UNLIKELY(e == -128))
+            return 0;
+        return (uint32_t)(m >> (sh > 31 ? 31 : sh));
     }
-    return o.f;
+    if (e <= 30)
+        return (uint32_t)m << (e - 23);
+    return m < 0 ? 0x80000000u : 0x7FFFFFFFu;
 }
 
 static inline __attribute__((always_inline)) float mf(uint32_t a)
 {
     a &= 0xFFFFFFu;
     return c2f(LIKELY(a < VU_FASTRAM_WORDS) ? vu.fastram[a] : RD(a));
-}
-
-static inline __attribute__((always_inline)) uint32_t fixf(float x)
-{
-    int32_t i;
-    if (UNLIKELY(x >= 2147483648.0f)) return 0x7FFFFFFFu;
-    if (UNLIKELY(x < -2147483648.0f)) return 0x80000000u;
-    i = (int32_t)x;
-    if ((float)i > x)
-        i--;
-    return (uint32_t)i;
 }
 
 /* Lectura con la ROM de programa en linea: los modelos y sus poligonos
@@ -243,6 +235,13 @@ static inline __attribute__((always_inline)) uint32_t rdm(uint32_t a)
 }
 
 #define MF(a)   mf(a)
+
+/* Palabra de la FASTRAM (o del bus) sin convertir */
+static inline __attribute__((always_inline)) uint32_t MW(uint32_t a)
+{
+    a &= 0xFFFFFFu;
+    return LIKELY(a < VU_FASTRAM_WORDS) ? vu.fastram[a] : RD(a);
+}
 #define SF(a, x) WR((a), float_to_c3x(x))
 
 enum { RC_ = 27, RS_ = 25, RE_ = 26 };
@@ -257,6 +256,13 @@ static inline const uint32_t *mem_ptr(uint32_t a, uint32_t words)
     if (a - VU_PROGROM_BASE < VU_PROGRAM_WORDS && a + words - VU_PROGROM_BASE <= VU_PROGRAM_WORDS && vu.program)
         return &vu.program[a - VU_PROGROM_BASE];
     return NULL;
+}
+
+/* Destino de escritura nativo si el rango esta entero en la FASTRAM */
+static inline uint32_t *out_ptr(uint32_t a, uint32_t words)
+{
+    a &= 0xFFFFFFu;
+    return a + words <= VU_FASTRAM_WORDS ? &vu.fastram[a] : NULL;
 }
 
 /* INVTAB (1/Z) convertida a flotante nativo; es una tabla constante. */
@@ -298,6 +304,7 @@ static void vtx_project(uint32_t rs, uint32_t re, uint32_t tz_addr, const float 
     const float *inv = inv_table(ar2);
     float m[9], tz = MF(tz_addr), tx = 0, ty = 0, tzv = 0;
     int sh = imm_shift ? -16 : (int32_t)(bk << 25) >> 25;
+    uint32_t *dst = out_ptr(ar3, iters * 3);
 
     for (k = 0; k < 9; k++)
         m[k] = MF(ar5 + k);
@@ -337,9 +344,16 @@ static void vtx_project(uint32_t rs, uint32_t re, uint32_t tz_addr, const float 
             sx = inv_z * R1 + R6;
             R0 = (inv_z * R3) * 1.0400390625f + R7;
             R2 = Z;
-            WR(ar3, float_to_c3x(sx));
-            WR(ar3 + 1, float_to_c3x(R0));
-            WR(ar3 + 2, float_to_c3x(Z));
+            if (dst) {
+                dst[0] = float_to_c3x(sx);
+                dst[1] = float_to_c3x(R0);
+                dst[2] = float_to_c3x(Z);
+                dst += 3;
+            } else {
+                WR(ar3, float_to_c3x(sx));
+                WR(ar3 + 1, float_to_c3x(R0));
+                WR(ar3 + 2, float_to_c3x(Z));
+            }
             ar3 += 3;
             ir1 = (uint32_t)iz;
         }
@@ -397,6 +411,7 @@ void hle_vtx_race(void)
     float t0 = MF(ar6 - 1), t1 = MF(ar6), t2 = MF(ar6 + 1);
     float y0 = MF(((r[DP] & 0xFF) << 16) | 0x54);
     int sh = (int32_t)(bk << 25) >> 25;
+    uint32_t *dst = out_ptr(ar3, iters * 3);
 
     for (k = 0; k < iters; k++) {
         uint32_t w0 = src ? src[2 * k] : RD(ar1 + 2 * k);
@@ -423,10 +438,20 @@ void hle_vtx_race(void)
         inv_z = inv[iz];
         R1 = X;
         R0 = inv_z * X + R6;                                /* 01B5-01B6 */
-        WR(ar3, float_to_c3x(R0));
-        WR(ar3 + 2, float_to_c3x(Z));
-        R0 = (inv_z * R7) * 1.0400390625f + y0;             /* 01B7-01B9 */
-        WR(ar3 + 1, float_to_c3x(R0));
+        {
+            uint32_t sx = float_to_c3x(R0);
+            R0 = (inv_z * R7) * 1.0400390625f + y0;         /* 01B7-01B9 */
+            if (dst) {
+                dst[0] = sx;
+                dst[1] = float_to_c3x(R0);
+                dst[2] = float_to_c3x(Z);
+                dst += 3;
+            } else {
+                WR(ar3, sx);
+                WR(ar3 + 2, float_to_c3x(Z));
+                WR(ar3 + 1, float_to_c3x(R0));
+            }
+        }
         ar3 += 3;
         ir1 = (uint32_t)iz;
     }
@@ -452,6 +477,8 @@ void hle_vtx_model(void)
     const uint32_t *src = mem_ptr(ar4, iters * 2);
     float m[9], t0 = MF(ar6 - 1), t1 = MF(ar6), t2 = MF(ar6 + 1), x = 0, y = 0, z = 0;
 
+    uint32_t *dst = out_ptr(ar3, iters * 3);
+
     for (k = 0; k < 9; k++)
         m[k] = MF(ar5 + k);
 
@@ -473,9 +500,16 @@ void hle_vtx_model(void)
         R2 = R1 + R0;
         R1 = z * m[8];
         oz = (R2 + R1) + t2;
-        WR(ar3, float_to_c3x(ox));
-        WR(ar3 + 1, float_to_c3x(oy));
-        WR(ar3 + 2, float_to_c3x(oz));
+        if (dst) {
+            dst[0] = float_to_c3x(ox);
+            dst[1] = float_to_c3x(oy);
+            dst[2] = float_to_c3x(oz);
+            dst += 3;
+        } else {
+            WR(ar3, float_to_c3x(ox));
+            WR(ar3 + 1, float_to_c3x(oy));
+            WR(ar3 + 2, float_to_c3x(oz));
+        }
         ar3 += 3;
         R2 = oz;
         R3 = oy;
@@ -518,6 +552,7 @@ uint32_t hle_poly_emit(void)
     uint32_t *r = C.r;
     uint32_t ar1 = r[AR1], ir0 = r[IR0], ir1 = r[IR1], r7, r6;
     uint32_t r3 = 0, ar2 = r[AR2], ar3 = r[AR3], ar4 = 0, ar5 = r[AR5];
+    uint32_t wx2, wy2, wx4, wy4, wx5, wy5;
     float f0 = 0, f1 = 0, f2 = 0, x2, y2, x4, y4, x5, y5;
     uint32_t i0 = 0, i1 = 0, i2 = 0;
     uint32_t rc = r[RC_];
@@ -544,9 +579,9 @@ uint32_t hle_poly_emit(void)
         r3 >>= 8;
         ar2 = (r3 & r7) * 3;
         /* 052A-052C: espera de FIFO (nunca llena en la emulacion) */
-        x4 = MF(ar4 + ir0); y4 = MF(ar4 + ir1);
-        x5 = MF(ar5 + ir0); y5 = MF(ar5 + ir1);
-        x2 = MF(ar2 + ir0); y2 = MF(ar2 + ir1);
+        wx4 = MW(ar4 + ir0); x4 = c2f(wx4); wy4 = MW(ar4 + ir1); y4 = c2f(wy4);
+        wx5 = MW(ar5 + ir0); x5 = c2f(wx5); wy5 = MW(ar5 + ir1); y5 = c2f(wy5);
+        wx2 = MW(ar2 + ir0); x2 = c2f(wx2); wy2 = MW(ar2 + ir1); y2 = c2f(wy2);
         f1 = x5 - x4;                                       /* 052D */
         f2 = y5 - y4;                                       /* 052E */
         f0 = x5 - x2;                                       /* 052F */
@@ -590,14 +625,14 @@ uint32_t hle_poly_emit(void)
             pkt[0] = rdm(ar1);
             ar1 += 2;
             pkt[1] = r6;                                    /* 053C ... || STI R6 */
-            pkt[2] = fixf(x4);
-            pkt[3] = fixf(y4);
-            pkt[4] = fixf(x5);
-            pkt[5] = fixf(y5);
-            pkt[6] = fixf(x2);
-            pkt[7] = fixf(y2);
-            pkt[8] = fixf(MF(ar3 + ir0));
-            pkt[9] = fixf(MF(ar3 + ir1));
+            pkt[2] = fixc(wx4);
+            pkt[3] = fixc(wy4);
+            pkt[4] = fixc(wx5);
+            pkt[5] = fixc(wy5);
+            pkt[6] = fixc(wx2);
+            pkt[7] = fixc(wy2);
+            pkt[8] = fixc(MW(ar3 + ir0));
+            pkt[9] = fixc(MW(ar3 + ir1));
             i0 = rdm(ar1); i1 = rdm(ar1 + 1); i2 = rdm(ar1 + 2);
             ar1 += 3;
             pkt[10] = i0;
@@ -635,6 +670,7 @@ uint32_t hle_poly_emit_pal(void)
     uint32_t *r = C.r;
     uint32_t ar1 = r[AR1], ir0 = r[IR0], ir1 = r[IR1], r7, r6, bk = r[BK];
     uint32_t r3 = 0, ar2 = r[AR2], ar3 = r[AR3], ar4 = 0, ar5 = r[AR5], ar6 = r[AR6];
+    uint32_t wx2, wy2, wx4, wy4, wx5, wy5;
     float f0 = 0, f1 = 0, f2 = 0, x2, y2, x4, y4, x5, y5;
     uint32_t i1 = 0, i2 = 0;
     uint32_t rc = r[RC_];
@@ -656,9 +692,9 @@ uint32_t hle_poly_emit_pal(void)
         ar5 = (r3 & r7) * 3;
         r3 >>= 8;
         ar2 = (r3 & r7) * 3;                                /* 0469 */
-        x4 = MF(ar4 + ir0); y4 = MF(ar4 + ir1);
-        x5 = MF(ar5 + ir0); y5 = MF(ar5 + ir1);
-        x2 = MF(ar2 + ir0); y2 = MF(ar2 + ir1);
+        wx4 = MW(ar4 + ir0); x4 = c2f(wx4); wy4 = MW(ar4 + ir1); y4 = c2f(wy4);
+        wx5 = MW(ar5 + ir0); x5 = c2f(wx5); wy5 = MW(ar5 + ir1); y5 = c2f(wy5);
+        wx2 = MW(ar2 + ir0); x2 = c2f(wx2); wy2 = MW(ar2 + ir1); y2 = c2f(wy2);
         f1 = x5 - x4;                                       /* 046D */
         f2 = y5 - y4;                                       /* 046E */
         f0 = x5 - x2;                                       /* 046F */
@@ -701,14 +737,14 @@ uint32_t hle_poly_emit_pal(void)
             ar6 = rt_shift(w0, r6, 0, 0) + bk;              /* 0478, 047A */
             pkt[0] = w0;
             pkt[1] = rt_shift(rdm(ar6), r6, 0, 0) << 8;      /* 047B-047C */
-            pkt[2] = fixf(x4);
-            pkt[3] = fixf(y4);
-            pkt[4] = fixf(x5);
-            pkt[5] = fixf(y5);
-            pkt[6] = fixf(x2);
-            pkt[7] = fixf(y2);
-            pkt[8] = fixf(MF(ar3 + ir0));
-            pkt[9] = fixf(MF(ar3 + ir1));
+            pkt[2] = fixc(wx4);
+            pkt[3] = fixc(wy4);
+            pkt[4] = fixc(wx5);
+            pkt[5] = fixc(wy5);
+            pkt[6] = fixc(wx2);
+            pkt[7] = fixc(wy2);
+            pkt[8] = fixc(MW(ar3 + ir0));
+            pkt[9] = fixc(MW(ar3 + ir1));
             i0 = rdm(ar1); i1 = rdm(ar1 + 1); i2 = rdm(ar1 + 2);
             ar1 += 3;
             pkt[10] = i0;
@@ -746,7 +782,8 @@ uint32_t hle_poly_emit_quad(void)
     uint32_t *r = C.r;
     uint32_t ar1 = r[AR1], ir0 = r[IR0], ir1 = r[IR1], r7, r6;
     uint32_t r3 = 0, ar2 = r[AR2], ar3 = r[AR3], ar4 = 0, ar5 = r[AR5];
-    float f0 = 0, f1 = 0, f2 = 0, f3 = 0, x2, y2, x3, y3, x4, y4, x5, y5;
+    uint32_t wx2, wy2, wx3 = 0, wy3 = 0, wx4, wy4, wx5, wy5;
+    float f0 = 0, f1 = 0, f2 = 0, f3 = 0, x2, y2, y3, x4, y4, x5, y5;
     uint32_t i1 = 0, i2 = 0;
     uint32_t rc = r[RC_];
     uint32_t work = 0;
@@ -770,10 +807,10 @@ uint32_t hle_poly_emit_quad(void)
         ar2 = (r3 & r7) * 3;
         r3 >>= 8;
         ar3 = (r3 & r7) * 3;                                /* 056C */
-        x4 = MF(ar4 + ir0); y4 = MF(ar4 + ir1);
-        x5 = MF(ar5 + ir0); y5 = MF(ar5 + ir1);
-        x2 = MF(ar2 + ir0); y2 = MF(ar2 + ir1);
-        y3 = MF(ar3 + ir1);
+        wx4 = MW(ar4 + ir0); x4 = c2f(wx4); wy4 = MW(ar4 + ir1); y4 = c2f(wy4);
+        wx5 = MW(ar5 + ir0); x5 = c2f(wx5); wy5 = MW(ar5 + ir1); y5 = c2f(wy5);
+        wx2 = MW(ar2 + ir0); x2 = c2f(wx2); wy2 = MW(ar2 + ir1); y2 = c2f(wy2);
+        wy3 = MW(ar3 + ir1); y3 = c2f(wy3);
         f1 = x5 - x4;                                       /* 0570 */
         f3 = y5 - y4;                                       /* 0571 */
         f0 = x2 - x5;                                       /* 0572 */
@@ -821,18 +858,18 @@ uint32_t hle_poly_emit_quad(void)
         }
         {
             uint32_t pkt[15], i0;
-            x3 = MF(ar3 + ir0);
+            wx3 = MW(ar3 + ir0);
             pkt[0] = rdm(ar1);                               /* 057F */
             ar1 += 2;
             pkt[1] = r6;                                    /* 0583 ... || STI R6 */
-            pkt[2] = fixf(x4);
-            pkt[3] = fixf(y4);
-            pkt[4] = fixf(x5);
-            pkt[5] = fixf(y5);
-            pkt[6] = fixf(x2);
-            pkt[7] = fixf(y2);
-            pkt[8] = fixf(x3);
-            pkt[9] = fixf(y3);
+            pkt[2] = fixc(wx4);
+            pkt[3] = fixc(wy4);
+            pkt[4] = fixc(wx5);
+            pkt[5] = fixc(wy5);
+            pkt[6] = fixc(wx2);
+            pkt[7] = fixc(wy2);
+            pkt[8] = fixc(wx3);
+            pkt[9] = fixc(wy3);
             i0 = rdm(ar1); i1 = rdm(ar1 + 1); i2 = rdm(ar1 + 2);
             ar1 += 3;
             pkt[10] = i0;
@@ -1047,6 +1084,7 @@ uint32_t hle_model_visible(void)
 #define ZS_ODIST     28u
 #define ZS_EXIT      0x0071A9u      /* ZSWTX / ZSWTXX */
 #define ZS_IDLE      0x0071A8u      /* "BR ZSORTWL" tras una pasada */
+#define ZS_MAXN      1024
 
 /*
  * El original hace pasadas de burbuja sobre la lista enlazada de objetos
@@ -1063,6 +1101,53 @@ uint32_t hle_zsort(void)
     uint32_t work = 0;
 
     r[R6] = 0;
+    /*
+     * Camino rapido: la lista se copia a un vector y se ordena por insercion
+     * (el mismo resultado que las pasadas de burbuja: estable, intercambia
+     * solo si d1 - d2 < 0), leyendo la distancia de cada objeto una vez en
+     * vez de una vez por pasada. Despues se reenlaza si ha cambiado algo.
+     */
+    {
+        static uint32_t node[ZS_MAXN];
+        static int32_t dist[ZS_MAXN];
+        int n = 0, i, j, moved = 0;
+        uint32_t p = RD(ar0);
+        while (p && n < ZS_MAXN) {
+            node[n] = p;
+            dist[n] = (int32_t)RD(p + ZS_ODIST);
+            n++;
+            p = RD(p);
+        }
+        if (!p) {
+            if (n < 2 || RD(ZS_CLEARRDY) == 0)
+                goto out_exit;
+            for (i = 1; i < n; i++) {
+                uint32_t nd = node[i];
+                int32_t dd = dist[i];
+                for (j = i; j > 0 && (int32_t)(dist[j - 1] - dd) < 0; j--) {
+                    node[j] = node[j - 1];
+                    dist[j] = dist[j - 1];
+                }
+                if (j != i) {
+                    node[j] = nd;
+                    dist[j] = dd;
+                    moved = 1;
+                }
+            }
+            if (moved) {
+                WR(head, node[0]);
+                for (i = 0; i < n - 1; i++)
+                    WR(node[i], node[i + 1]);
+                WR(node[n - 1], 0);
+            }
+            work = 8u * (uint32_t)n * (moved ? 2u : 1u);
+            /* registros como al final de la ultima pasada sin intercambios */
+            ar0 = node[n - 2];
+            ar1 = node[n - 1];
+            ar2 = 0;
+            goto sorted;
+        }
+    }
     for (;;) {
         swapped = 0;
         ar0 = head;
@@ -1101,6 +1186,7 @@ uint32_t hle_zsort(void)
             break;
     }
     /* lista ordenada: punto de espera con R6 = 0 */
+sorted:
     r[R6] = 0;
     SYNC_I(0);
     r[R0] = RD(ZS_CLEARRDY); C.rk[0] = 2;

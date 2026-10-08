@@ -78,7 +78,7 @@ void c3x_set_irq(c3x_state *cpu, int bit);   /* activa un bit de IF */
  *   positivo: (1 + f) * 2^e      negativo: (-2 + f) * 2^e
  * con f = frac / 2^23. El exponente -128 representa el cero.
  */
-static inline float c3x_to_float(uint32_t v)
+static __attribute__((noinline, unused)) float c3x_to_float_slow(uint32_t v)
 {
     union { uint32_t u; float f; } out;
     int32_t e = (int8_t)(v >> 24);
@@ -108,7 +108,27 @@ static inline float c3x_to_float(uint32_t v)
     return out.f;
 }
 
-static inline uint32_t float_to_c3x(float x)
+
+/* Caso general sin saltos (el SH-4 no tiene movimientos condicionales);
+ * cero, desnormales y la saturacion de -2 * 2^127 van por la ruta lenta. */
+static inline __attribute__((always_inline)) float c3x_to_float(uint32_t v)
+{
+    union { uint32_t u; float f; } out;
+    uint32_t neg = 0u - ((v >> 23) & 1u);
+    uint32_t frac = v & 0x7FFFFFu;
+    uint32_t be = ((v >> 24) + 127u) & 0xFFu;   /* exponente IEEE */
+
+    if (__builtin_expect(be - 1u >= 253u, 0)) {
+        if (be == 0xFFu)                         /* exponente -128: cero */
+            return 0.0f;
+        return c3x_to_float_slow(v);
+    }
+    /* negativo: mantisa 1 - f (con f = 0 sube al exponente siguiente) */
+    out.u = (neg & 0x80000000u) | ((be << 23) + (((frac ^ neg) - neg) + (neg & 0x800000u)));
+    return out.f;
+}
+
+static __attribute__((noinline, unused)) uint32_t float_to_c3x_slow(float x)
 {
     union { float f; uint32_t u; } in;
     uint32_t ie, mant;
@@ -134,6 +154,25 @@ static inline uint32_t float_to_c3x(float x)
         return ((uint32_t)(e & 0xFF) << 24) | 0x800000u;
     }
     return ((uint32_t)(e & 0xFF) << 24) | 0x800000u | (0x800000u - mant);
+}
+
+
+/* Igual, sin saltos para los flotantes normales */
+static inline __attribute__((always_inline)) uint32_t float_to_c3x(float x)
+{
+    union { float f; uint32_t u; } in;
+    uint32_t ie, mant, neg, e24, nm;
+
+    in.f = x;
+    ie = (in.u >> 23) & 0xFFu;
+    if (__builtin_expect(ie - 1u >= 254u, 0))
+        return float_to_c3x_slow(x);
+    mant = in.u & 0x7FFFFFu;
+    neg = 0u - (in.u >> 31);
+    e24 = (ie - 127u) << 24;
+    /* negativo: 1 + m = 2 - (1 - m); con m = 0, -2 * 2^(e-1) */
+    nm = 0x800000u + ((0x800000u - mant) & 0x7FFFFFu) - (((mant - 1u) >> 31) << 24);
+    return e24 + (mant ^ ((mant ^ nm) & neg));
 }
 
 /* Flotante corto de 16 bits usado en los inmediatos (LDF 1.5,R0, etc.). */
