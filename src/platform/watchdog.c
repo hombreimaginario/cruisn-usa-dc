@@ -23,6 +23,7 @@ volatile const char *wd_phase = "arranque";
 volatile const char *wd_thread_phase = "-";
 volatile uint32_t wd_heartbeat;
 volatile uint32_t wd_counters[WD_NCOUNT];
+volatile uint32_t wd_heap_kb;
 
 static kthread_t *main_thread;
 static uint32_t last_beat, stale_ticks, shown;
@@ -66,7 +67,8 @@ static void show(void)
              (unsigned long)wd_counters[WD_CD_GFX], (unsigned long)wd_counters[WD_CD_MUSIC],
              (unsigned long)wd_counters[WD_CD_ERR]);
     line(r++, buf);
-    snprintf(buf, sizeof(buf), "codigo interpretado %lu", (unsigned long)wd_counters[WD_INTERP]);
+    snprintf(buf, sizeof(buf), "codigo interpretado %lu  memoria libre %lu KB",
+             (unsigned long)wd_counters[WD_INTERP], (unsigned long)wd_heap_kb);
     line(r++, buf);
     r++;
     line(r++, "Haz una foto de esta pantalla, por favor.");

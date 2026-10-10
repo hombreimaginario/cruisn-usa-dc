@@ -9,7 +9,8 @@
 #define CUSA_STATS 1
 #endif
 
-void pvrr_init(void);
+/* 0 si todo bien; -1 sin memoria para las listas de poligonos */
+int pvrr_init(void);
 void pvrr_frame(int shot);      /* llamar en cada interrupcion de video */
 /* Depuracion: reservar ya la textura de las capturas (CUSA_SHOT) */
 void pvrr_reserve_shot(void);

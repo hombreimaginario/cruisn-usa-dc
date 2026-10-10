@@ -19,6 +19,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <malloc.h>
+#include <unistd.h>
 #include <string.h>
 
 #include "../c3x/c3x.h"
@@ -199,6 +200,11 @@ static void read_inputs(void)
             sw |= SW_START;
         vu.in.switches = sw;
         vu.in.wheel = 0x80;
+#ifdef AUTO_WHEEL
+        /* volante en las pantallas de eleccion: otro coche y otra carrera */
+        if (f >= 1250 && f < 2400)
+            vu.in.wheel = AUTO_WHEEL;
+#endif
         vu.in.gas = f >= 2400 ? 0xE0 : 0;
         vu.in.brake = 0;
         if (f >= 2600)                  /* zigzag entre el trafico */
@@ -472,6 +478,18 @@ void rt_platform_event(void)
 #endif
 
 static uint64_t t_boot;
+
+/* Memoria libre del monticulo (el bloque mas grande que se puede reservar,
+ * mas lo libre en bloques sueltos): las partidas en la VMU y los hilos la
+ * necesitan. Una reserva fallida dejaba antes un puntero nulo. */
+static uint32_t heap_free_kb(void)
+{
+    /* lo que le queda a sbrk (hasta la pila del kernel) mas lo libre dentro
+     * del monticulo */
+    uintptr_t top = _arch_mem_top - THD_KERNEL_STACK_SIZE, cur = (uintptr_t)sbrk(0);
+    struct mallinfo mi = mallinfo();
+    return (uint32_t)((top > cur ? top - cur : 0) + (uint32_t)mi.fordblks) / 1024;
+}
 static int boot_line;
 
 /* Pasos del arranque en la pantalla de carga: si algo se cuelga antes de
@@ -548,13 +566,9 @@ int main(int argc, char **argv)
     boot_step("cargando sonido");
     if (sound_init("/cd/sound.bin") == 0)
         vu_sound_hook = sound_dcs_write;
-    {
-        struct mallinfo mi = mallinfo();
-        printf("memoria: %d KB usados en el monticulo, %d KB libres en bloques\n",
-               mi.uordblks / 1024, mi.fordblks / 1024);
-    }
     boot_step("iniciando PowerVR");
-    pvrr_init();
+    if (pvrr_init() < 0)
+        boot_fail("sin memoria para los poligonos");
 #ifdef CUSA_SHOT
     pvrr_reserve_shot();
 #endif
@@ -575,6 +589,8 @@ int main(int argc, char **argv)
     vmu_lcd_start();
     rumble_start();
 #endif
+    wd_heap_kb = heap_free_kb();
+    printf("memoria libre: %u KB\n", (unsigned)wd_heap_kb);
     wd_phase = "juego";
     rt_run();
 #else

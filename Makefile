@@ -38,6 +38,12 @@ src/platform/main_dc.o src/platform/watchdog.o: src/platform/version.h
 # imagenes por segundo en carrera; el resto queda en -O2 por tamano.
 src/recomp/hle.o src/platform/pvr_render.o: KOS_CFLAGS += -O3 -funroll-loops
 
+# Codigo traducido del C31 con -Os: con -O2 eran ~6 MB y la RAM de la
+# consola (16 MB) no daba para todo (fallaban reservas de memoria). Con -Os
+# ocupa 1,8 MB menos y en carrera va igual o algo mejor (menos fallos de
+# cache de instrucciones).
+$(RECOMP_SRCS:.c=.o): KOS_CFLAGS += -Os
+
 all: rm-elf $(TARGET)
 
 include $(KOS_BASE)/Makefile.rules

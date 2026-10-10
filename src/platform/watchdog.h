@@ -10,6 +10,7 @@ extern volatile const char *wd_phase;
 extern volatile const char *wd_thread_phase;
 extern volatile uint32_t wd_heartbeat;          /* +1 por interrupcion de video */
 extern volatile uint32_t wd_counters[WD_NCOUNT];
+extern volatile uint32_t wd_heap_kb;            /* memoria libre al arrancar */
 
 void watchdog_start(void);
 

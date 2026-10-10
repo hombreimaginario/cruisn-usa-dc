@@ -33,9 +33,14 @@
 #define SX          1.25f       /* 512 -> 640 */
 #define SY          1.2f        /* 400 -> 480 */
 
+/* Lo que se usa del paquete de 15 palabras, en 32 bytes (una linea de
+ * cache): coordenadas, UV, control (ZS/NZR/DITHER/color), paleta y base
+ * de textura. */
 typedef struct {
-    uint32_t d[15];
-} packet;
+    int16_t x[4], y[4];
+    uint16_t uv[4];             /* u en el byte bajo, v en el alto */
+    uint16_t c0, c1, tb, pad;   /* palabras 0, 1 y 14 (16 bits bajos) */
+} __attribute__((aligned(32))) packet;
 
 static packet *page_polys[2];
 static int page_npolys[2];
@@ -291,14 +296,14 @@ typedef struct {
 } lookup_entry;
 static lookup_entry lcache[LC_SIZE];
 
-static tex_entry *get_texture_slow(const uint32_t *d);
+static tex_entry *get_texture_slow(const packet *d);
 
-static inline tex_entry *get_texture(const uint32_t *d)
+static inline tex_entry *get_texture(const packet *d)
 {
-    uint32_t a = (d[14] & 0x7FFF) | ((d[1] & 0x7F00) << 8);
-    uint32_t b = d[0] & 0xCFF;
-    uint32_t c = (d[10] & 0xFFFF) | (d[11] << 16);
-    uint32_t e = (d[12] & 0xFFFF) | (d[13] << 16);
+    uint32_t a = (d->tb & 0x7FFF) | ((uint32_t)(d->c1 & 0x7F00) << 8);
+    uint32_t b = d->c0 & 0xCFF;
+    uint32_t c = d->uv[0] | ((uint32_t)d->uv[1] << 16);
+    uint32_t e = d->uv[2] | ((uint32_t)d->uv[3] << 16);
     uint32_t h = (a * 2654435761u) ^ (b * 0x9E3779B1u) ^ (c * 0x85EBCA77u) ^ (e * 0xC2B2AE3Du);
     lookup_entry *l = &lcache[(h >> 16) & (LC_SIZE - 1)];
     tex_entry *t;
@@ -312,7 +317,7 @@ static inline tex_entry *get_texture(const uint32_t *d)
     return t;
 }
 
-static tex_entry *get_texture_slow(const uint32_t *d)
+static tex_entry *get_texture_slow(const packet *d)
 {
     tex_req r;
     uint32_t umin = 255, umax = 0, vmin = 255, vmax = 0, slot, k, g, pg;
@@ -320,17 +325,17 @@ static tex_entry *get_texture_slow(const uint32_t *d)
     tex_entry *t;
 
     for (k = 0; k < 4; k++) {
-        uint32_t u = d[10 + k] & 0xFF, v = (d[10 + k] >> 8) & 0xFF;
+        uint32_t u = d->uv[k] & 0xFF, v = d->uv[k] >> 8;
         if (u < umin) umin = u;
         if (u > umax) umax = u;
         if (v < vmin) vmin = v;
         if (v > vmax) vmax = v;
     }
-    r.base = d[14] & 0x7FFF;
-    r.pal = (d[1] >> 8) & 0x7F;
-    r.zs = (d[0] & 0x800) != 0;
-    r.nzr = (d[0] & 0x400) != 0;
-    r.color = r.nzr ? (d[0] & 0xFF) : 0;
+    r.base = d->tb & 0x7FFF;
+    r.pal = (d->c1 >> 8) & 0x7F;
+    r.zs = (d->c0 & 0x800) != 0;
+    r.nzr = (d->c0 & 0x400) != 0;
+    r.color = r.nzr ? (d->c0 & 0xFF) : 0;
 #ifdef PVR_FULL_TEX
     umin = 0; vmin = 0; umax = 255;
 #endif
@@ -371,7 +376,7 @@ static tex_entry *get_texture_slow(const uint32_t *d)
         return NULL;
     }
     if (t->blk_sum != g || t->pal_gen != pg || !t->ptr) {
-        uint32_t pixdata = (d[1] & 0xFF00) | (d[0] & 0xFF);
+        uint32_t pixdata = (d->c1 & 0xFF00) | (d->c0 & 0xFF);
         /* limite de conversiones por frame: se reutiliza la version anterior */
         if ((conv_this_frame >= MAX_CONV_PER_FRAME || texels_this_frame >= MAX_TEXELS_PER_FRAME) && t->ptr) {
             t->last_used = frame_no;
@@ -417,18 +422,25 @@ static void on_poly(const uint32_t *d, int page)
          * un 5 y un 10 % en carretera: cielo y suelo en tiras de 256) */
         int16_t x0 = (int16_t)d[2], x1 = (int16_t)d[4], x2 = (int16_t)d[6], x3 = (int16_t)d[8];
         int16_t y0 = (int16_t)d[3], y1 = (int16_t)d[5], y2 = (int16_t)d[7], y3 = (int16_t)d[9];
+        packet *o;
         if ((x0 < 0 && x1 < 0 && x2 < 0 && x3 < 0) || (x0 >= 512 && x1 >= 512 && x2 >= 512 && x3 >= 512) ||
             (y0 < 0 && y1 < 0 && y2 < 0 && y3 < 0) || (y0 >= 400 && y1 >= 400 && y2 >= 400 && y3 >= 400))
             return;
+        if (page_npolys[page] >= MAX_POLYS)
+            return;
+        o = &page_polys[page][page_npolys[page]++];
+        o->x[0] = x0; o->x[1] = x1; o->x[2] = x2; o->x[3] = x3;
+        o->y[0] = y0; o->y[1] = y1; o->y[2] = y2; o->y[3] = y3;
+        o->uv[0] = (uint16_t)d[10]; o->uv[1] = (uint16_t)d[11];
+        o->uv[2] = (uint16_t)d[12]; o->uv[3] = (uint16_t)d[13];
+        o->c0 = (uint16_t)d[0]; o->c1 = (uint16_t)d[1]; o->tb = (uint16_t)d[14];
     }
-    if (page_npolys[page] < MAX_POLYS)
-        memcpy(page_polys[page][page_npolys[page]++].d, d, sizeof(packet));
 }
 
 /* ---- envio al PVR ---- */
 
 typedef struct {
-    const uint32_t *d;
+    const packet *d;
     tex_entry *t;
     float z;
 } draw_item;
@@ -436,7 +448,8 @@ typedef struct {
 /* Poligonos del frame ordenados por textura (orden de primer uso), por
  * separado para la lista opaca y la punch-through. El orden de dibujo del
  * original lo mantiene la Z. */
-static draw_item items[3][MAX_POLYS];   /* opaca, punch-through, tramada */
+static draw_item items_buf[MAX_POLYS];
+static draw_item *items[3];             /* opaca, punch-through, tramada (seguidas) */
 static draw_item unsorted[MAX_POLYS];
 static uint16_t seq_count[3][MAX_POLYS + 1];
 
@@ -453,7 +466,7 @@ static void submit_list(pvr_list_t list, const draw_item *it, int n)
     static const int order[4] = { 0, 1, 3, 2 };
 
     for (i = 0; i < n; i++, it++) {
-        const uint32_t *d = it->d;
+        const packet *d = it->d;
         tex_entry *t = it->t;
         if (i + 4 < n)
             __builtin_prefetch(it[4].d);
@@ -467,7 +480,7 @@ static void submit_list(pvr_list_t list, const draw_item *it, int n)
         float uo = 0, vo = 0, iw = 0, ih = 0, z = it->z;
 
         if (!t) {
-            uint16_t c = vu.coloram[((d[1] & 0xFF00) | (d[0] & 0xFF)) & 0x7FFF];
+            uint16_t c = vu.coloram[((d->c1 & 0xFF00) | (d->c0 & 0xFF)) & 0x7FFF];
             argb = 0xFF000000u | ((c & 0x7C00) << 9) | ((c & 0x03E0) << 6) | ((c & 0x1F) << 3);
         }
         if (list == PVR_LIST_TR_POLY)
@@ -501,11 +514,11 @@ static void submit_list(pvr_list_t list, const draw_item *it, int n)
             int vi = order[k];
             pvr_vertex_t *v = pvr_dr_target();
             v->flags = k == 3 ? PVR_CMD_VERTEX_EOL : PVR_CMD_VERTEX;
-            v->x = ((float)(int16_t)d[2 + vi * 2] + 0.5f) * SX;
-            v->y = ((float)(int16_t)d[3 + vi * 2] + 0.5f) * SY;
+            v->x = ((float)d->x[vi] + 0.5f) * SX;
+            v->y = ((float)d->y[vi] + 0.5f) * SY;
             v->z = z;
-            v->u = (float)(d[10 + vi] & 0xFF) * iw + uo;
-            v->v = (float)((d[10 + vi] >> 8) & 0xFF) * ih + vo;
+            v->u = (float)(d->uv[vi] & 0xFF) * iw + uo;
+            v->v = (float)(d->uv[vi] >> 8) * ih + vo;
             v->argb = argb;
             v->oargb = 0;
             pvr_dr_commit(v);
@@ -604,13 +617,13 @@ static int render_page(int page, int shot)
         for (l = 0; l < 3; l++)
             memset(seq_count[l], 0, (used[l] + 1u) * sizeof(seq_count[l][0]));
         for (i = 0; i < n; i++) {
-            const uint32_t *d = page_polys[page][i].d;
+            const packet *d = &page_polys[page][i];
             if (i + 4 < n)
-                __builtin_prefetch(page_polys[page][i + 4].d);
+                __builtin_prefetch(&page_polys[page][i + 4]);
             tex_entry *t = NULL;
             uint16_t sq = 0;
             l = 0;
-            if ((d[0] & 0x300) == 0x100) {
+            if ((d->c0 & 0x300) == 0x100) {
                 t = get_texture(d);
                 if (!t) {
                     stat_skipped++;
@@ -627,7 +640,7 @@ static int render_page(int page, int shot)
             /* DITHER (bit 13): el V-Unit pinta uno de cada dos pixeles, una
              * sombra o velo semitransparente; aqui va a la lista translucida
              * al 50 %, en el orden original */
-            if (d[0] & 0x2000) {
+            if (d->c0 & 0x2000) {
                 l = 2;
                 sq = 0;
             }
@@ -638,13 +651,16 @@ static int render_page(int page, int shot)
             total[l]++;
             m++;
         }
+        items[0] = items_buf;
+        items[1] = items[0] + total[0];
+        items[2] = items[1] + total[1];
         /* ordenacion por cuentas (estable) */
         for (l = 0; l < 3; l++)
             for (i = 1; i <= nseq[l]; i++)
                 seq_count[l][i] += seq_count[l][i - 1];
         for (i = 0; i < m; i++) {
             tex_entry *t = unsorted[i].t;
-            if (unsorted[i].d[0] & 0x2000)
+            if (unsorted[i].d->c0 & 0x2000)
                 items[2][seq_count[2][0]++] = unsorted[i];
             else {
                 l = t ? t->pt : 0;
@@ -757,7 +773,7 @@ static void dump_shot(void)
 #endif
 }
 
-void pvrr_init(void)
+int pvrr_init(void)
 {
     /*
      * En carrera hay hasta ~3000 poligonos por frame y hasta varios cientos
@@ -780,10 +796,13 @@ void pvrr_init(void)
     printf("VRAM libre para texturas: %u KB\n", (unsigned)(pvr_mem_available() / 1024));
     page_polys[0] = malloc(sizeof(packet) * MAX_POLYS);
     page_polys[1] = malloc(sizeof(packet) * MAX_POLYS);
+    if (!page_polys[0] || !page_polys[1])
+        return -1;
     pool_init();
     printf("texturas: bloque de %u KB\n", (unsigned)(pool_bytes / 1024));
     vu_poly_hook = on_poly;
     vu_fifo_reset_hook = on_fifo_reset;
+    return 0;
 }
 
 /* Reserva la textura de captura antes de que el bloque se fragmente */
