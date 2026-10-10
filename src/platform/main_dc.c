@@ -581,7 +581,9 @@ int main(int argc, char **argv)
     prof_start();
 #endif
     t0 = timer_ms_gettime64();
-#ifndef CUSA_PROF
+#if !defined(CUSA_PROF) && !defined(CUSA_SHOT)
+    /* sin vigilante en las capturas: enviar una imagen por el puerto serie
+     * tarda mas de 3 s y parecia un cuelgue */
     watchdog_start();
 #endif
     rt_interp_hook = count_interp;
