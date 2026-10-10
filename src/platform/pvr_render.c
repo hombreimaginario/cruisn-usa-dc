@@ -191,12 +191,25 @@ static uint64_t tex_key(const tex_req *r)
            ((uint64_t)r->wc << 12) | ((uint64_t)r->hc << 9);
 }
 
+/* Expulsa una textura de la VRAM: recorre la tabla en circulo desde donde
+ * lo dejo la vez anterior y se queda con la primera que no se ha usado en
+ * los ultimos 30 frames (antes se buscaba la mas antigua de las 1024 cada
+ * vez, y en circuitos con muchas texturas eso se notaba). Si no hay
+ * ninguna tan vieja, la mas antigua de la vuelta. */
 static int evict_one(void)
 {
-    int i, best = -1;
-    for (i = 0; i < TEX_SLOTS; i++) {
-        if (texs[i].key && texs[i].ptr && texs[i].last_used != frame_no &&
-            (best < 0 || texs[i].last_used < texs[best].last_used))
+    static int hand;
+    int i, n, best = -1;
+    for (n = 0; n < TEX_SLOTS; n++) {
+        i = hand;
+        hand = (hand + 1) % TEX_SLOTS;
+        if (!texs[i].key || !texs[i].ptr || texs[i].last_used == frame_no)
+            continue;
+        if (frame_no - texs[i].last_used >= 30) {
+            best = i;
+            break;
+        }
+        if (best < 0 || texs[i].last_used < texs[best].last_used)
             best = i;
     }
     if (best >= 0) {

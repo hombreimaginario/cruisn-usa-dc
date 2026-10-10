@@ -213,6 +213,13 @@ uint32_t rt_rd_slow(uint32_t a)
         return vu.c31ram[a - VU_C31_RAM_BASE];
     if (a - VU_PROGROM_BASE < VU_PROGRAM_WORDS && vu.program)
         return vu.program[a - VU_PROGROM_BASE];   /* modelos 3D y tablas en ROM */
+    {
+        /* ROM grafica (texturas comprimidas que el juego copia a la WAVERAM
+         * en plena carrera): casi siempre en la misma pagina que la anterior */
+        uint32_t g = a - VU_GFXROM_BASE - vu_gfx_last_base;
+        if (g < vu_gfx_last_words)
+            return vu_gfx_last[g];
+    }
     return c3x_mem_read(a);
 }
 

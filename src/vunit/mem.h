@@ -93,6 +93,9 @@ extern void     (*vu_raise_irq)(int bit);
 /* Lectura de la ROM grafica cuando no cabe en memoria (vu.gfx == NULL):
  * la plataforma la sirve desde disco con una cache de paginas. */
 extern uint32_t (*vu_gfx_fetch)(uint32_t word_index);
+/* Ultima pagina servida por vu_gfx_fetch (acceso rapido sin llamada) */
+extern const uint32_t *vu_gfx_last;
+extern uint32_t vu_gfx_last_base, vu_gfx_last_words;
 
 void vu_reset(const uint32_t *program, const uint32_t *gfx);
 int  vu_skip_memtests(void);

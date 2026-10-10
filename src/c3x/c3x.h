@@ -165,8 +165,11 @@ static inline __attribute__((always_inline)) uint32_t float_to_c3x(float x)
 
     in.f = x;
     ie = (in.u >> 23) & 0xFFu;
-    if (__builtin_expect(ie - 1u >= 254u, 0))
+    if (__builtin_expect(ie - 1u >= 254u, 0)) {
+        if (ie == 0)                             /* cero y desnormales */
+            return 0x80000000u;
         return float_to_c3x_slow(x);
+    }
     mant = in.u & 0x7FFFFFu;
     neg = 0u - (in.u >> 31);
     e24 = (ie - 127u) << 24;

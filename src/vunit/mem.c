@@ -27,6 +27,8 @@ uint64_t (*vu_get_cycles)(void) = no_cycles;
 uint32_t (*vu_get_pc)(void) = no_pc;
 void     (*vu_raise_irq)(int bit) = no_irq;
 uint32_t (*vu_gfx_fetch)(uint32_t word_index);
+const uint32_t *vu_gfx_last;
+uint32_t vu_gfx_last_base, vu_gfx_last_words;
 
 /* ---- registro de accesos sin mapear ---- */
 

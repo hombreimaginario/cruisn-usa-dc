@@ -77,6 +77,9 @@ static uint32_t gfx_fetch(uint32_t word)
         gfx_tag[slot] = (int32_t)page;
         wd_phase = prev;
     }
+    vu_gfx_last = gfx_cache[slot];
+    vu_gfx_last_base = page * GFX_PAGE_WORDS;
+    vu_gfx_last_words = GFX_PAGE_WORDS;
     return gfx_cache[slot][word % GFX_PAGE_WORDS];
 }
 
