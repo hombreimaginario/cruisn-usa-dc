@@ -365,9 +365,13 @@ void c3x_mem_write(uint32_t addr, uint32_t v)
         return;
     case 0xA: case 0xB: {
         uint32_t o = (addr - VU_TEXRAM_BASE) * 2;
-        vu.texram[o] = (uint8_t)v;
-        vu.texram[o + 1] = (uint8_t)(v >> 8);
-        vu.texblk_gen[(o >> 12) & 1023]++;
+        uint16_t *p = (uint16_t *)&vu.texram[o];        /* o es par */
+        /* solo si cambia: el juego vuelve a copiar texturas que ya estan
+         * (en Arizona sin parar) y cada cambio obliga a reconvertirlas */
+        if (*p != (uint16_t)v) {
+            *p = (uint16_t)v;
+            vu.texblk_gen[(o >> 12) & 1023]++;
+        }
         return;
     }
     case 0xC: case 0xD: case 0xE:
