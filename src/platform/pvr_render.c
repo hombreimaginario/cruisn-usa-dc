@@ -16,6 +16,7 @@
  */
 #include <kos.h>
 #include <dc/pvr.h>
+#include <dc/sq.h>
 #include <dc/biosfont.h>
 
 #include <stdio.h>
@@ -172,7 +173,7 @@ static unsigned stat_conv, stat_polys, stat_skipped, stat_pages, stat_why[4], st
 static uint64_t t_tex, t_wait, t_sub;
 static unsigned conv_this_frame;
 #ifdef CUSA_TEXDBG
-static unsigned dbg_new, dbg_blk, dbg_pal;
+static unsigned dbg_new, dbg_blk, dbg_pal, dbg_evict, dbg_ktex;
 #endif
 #define MAX_CONV_PER_FRAME 400
 #define MAX_TEXELS_PER_FRAME (1024 * 1024)
@@ -213,6 +214,9 @@ static int evict_one(void)
             best = i;
     }
     if (best >= 0) {
+#ifdef CUSA_TEXDBG
+        dbg_evict++;
+#endif
         pool_free(texs[best].ptr, (uint32_t)texs[best].w * texs[best].h * 2);
         texs[best].ptr = NULL;
         texs[best].key = 0;
@@ -243,17 +247,30 @@ static void vram_guard(void)
     }
 }
 
+/*
+ * Convierte la textura y la escribe directamente en la VRAM con las store
+ * queues, linea a linea: antes se convertia entera a un bufer de 128 KB y
+ * despues se copiaba, dos pasadas que ademas vaciaban la cache de datos
+ * (16 KB). Al empezar cada carrera se convierten miles.
+ */
 static int convert(tex_entry *t, const tex_req *r, uint32_t pixdata)
 {
     const uint8_t *src = vu.texram;
     const uint16_t *cram = &vu.coloram[(r->pal & 0x7F) << 8];
     uint16_t nzr_col = vu.coloram[pixdata & 0x7FFF];
-    uint32_t x, y, n = t->w * t->h;
-    uint16_t *o = conv_buf;
-
+    uint32_t x, y, n = t->w * t->h, w = t->w;
+    static uint16_t rowbuf[256] __attribute__((aligned(32)));
     uint16_t lut[256];
-    uint32_t i;
+    uint32_t i, *d;
 
+    if (!t->ptr) {
+        while (!(t->ptr = pool_alloc(n * 2))) {
+            if (!evict_one()) {
+                conv_this_frame = MAX_CONV_PER_FRAME;   /* VRAM llena: basta por hoy */
+                return 0;
+            }
+        }
+    }
     /* tabla de los 256 valores de texel ya en ARGB1555 */
     for (i = 0; i < 256; i++) {
         if (r->nzr)
@@ -263,30 +280,39 @@ static int convert(tex_entry *t, const tex_req *r, uint32_t pixdata)
         else
             lut[i] = argb1555(cram[i], 1);
     }
+    vram_guard();
+    d = sq_lock((void *)(((uintptr_t)t->ptr & 0xFFFFFF) | PVR_TA_TEX_MEM));
     for (y = 0; y < t->h; y++) {
         const uint8_t *row = src + ((r->base * 256 + ((r->v0 + y) & 0xFF) * 256) & (sizeof(vu.texram) - 1));
-        if (r->u0 + t->w <= 256) {
+        /* con 8 de ancho caben dos lineas en cada bloque de 32 bytes */
+        uint16_t *o = rowbuf + (w == 8 ? (y & 1) * 8 : 0);
+        const uint32_t *q = (const uint32_t *)rowbuf;
+        uint32_t chunks;
+        if (r->u0 + w <= 256) {
             const uint8_t *p = row + r->u0;
-            for (x = 0; x < t->w; x += 4) {
+            for (x = 0; x < w; x += 4) {
                 o[0] = lut[p[0]]; o[1] = lut[p[1]];
                 o[2] = lut[p[2]]; o[3] = lut[p[3]];
                 o += 4; p += 4;
             }
         } else {
-            for (x = 0; x < t->w; x++)
+            for (x = 0; x < w; x++)
                 *o++ = lut[row[(r->u0 + x) & 0xFF]];
         }
-    }
-    if (!t->ptr) {
-        while (!(t->ptr = pool_alloc(n * 2))) {
-            if (!evict_one()) {
-                conv_this_frame = MAX_CONV_PER_FRAME;   /* VRAM llena: basta por hoy */
-                return 0;
-            }
+        if (w == 8 && !(y & 1))
+            continue;
+        for (chunks = w == 8 ? 1 : w / 16; chunks; chunks--) {
+            d[0] = q[0]; d[1] = q[1]; d[2] = q[2]; d[3] = q[3];
+            d[4] = q[4]; d[5] = q[5]; d[6] = q[6]; d[7] = q[7];
+            sq_flush(d);
+            d += 8;
+            q += 8;
         }
     }
-    vram_guard();
-    pvr_txr_load(conv_buf, t->ptr, n * 2);
+    sq_unlock();
+#ifdef CUSA_TEXDBG
+    dbg_ktex += n / 1024;
+#endif
     stat_conv++;
     return 1;
 }
@@ -874,8 +900,14 @@ void pvrr_stats(unsigned *conv, unsigned *polys)
            (unsigned)(t_tex / 1000), (unsigned)(t_wait / 1000), stat_ta_timeouts, (unsigned)(t_rwait / 1000),
            (unsigned)(t_sub / 1000), stat_skipped, stat_why[0], stat_why[1], stat_why[2], stat_why[3]);
 #ifdef CUSA_TEXDBG
-    printf("  texdbg: nuevas %u bloque %u paleta %u\n", dbg_new, dbg_blk, dbg_pal);
-    dbg_new = dbg_blk = dbg_pal = 0;
+    {
+        unsigned i, used = 0, nt = 0;
+        for (i = 0; i < TEX_SLOTS; i++)
+            if (texs[i].ptr) { used += (unsigned)texs[i].w * texs[i].h * 2 / 1024; nt++; }
+        printf("  texdbg: nuevas %u bloque %u paleta %u expulsadas %u, %u Ktexels convertidos; en VRAM %u texturas %u KB de %u\n",
+               dbg_new, dbg_blk, dbg_pal, dbg_evict, dbg_ktex, nt, used, (unsigned)(pool_bytes / 1024));
+    }
+    dbg_new = dbg_blk = dbg_pal = dbg_evict = dbg_ktex = 0;
 #endif
     if (stat_vfull)
         printf("  render: bufer de vertices lleno %u veces\n", stat_vfull);
