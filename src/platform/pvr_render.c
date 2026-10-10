@@ -177,6 +177,13 @@ static unsigned dbg_new, dbg_blk, dbg_pal, dbg_evict, dbg_ktex;
 #endif
 #define MAX_CONV_PER_FRAME 400
 #define MAX_TEXELS_PER_FRAME (1024 * 1024)
+/* Despues de retener la imagen anterior HOLD_UNLIMIT frames seguidos por
+ * texturas pendientes, se convierten todas de una vez (un frame lento) en
+ * vez de acabar mostrando la escena sin marcador ni coches. */
+#define HOLD_UNLIMIT 8
+static int conv_unlimited, vram_full;
+#define CONV_LIMIT() (vram_full || (!conv_unlimited && \
+    (conv_this_frame >= MAX_CONV_PER_FRAME || texels_this_frame >= MAX_TEXELS_PER_FRAME)))
 static uint32_t texels_this_frame;
 
 static inline uint16_t argb1555(uint16_t c, int opaque)
@@ -266,7 +273,7 @@ static int convert(tex_entry *t, const tex_req *r, uint32_t pixdata)
     if (!t->ptr) {
         while (!(t->ptr = pool_alloc(n * 2))) {
             if (!evict_one()) {
-                conv_this_frame = MAX_CONV_PER_FRAME;   /* VRAM llena: basta por hoy */
+                vram_full = 1;                          /* VRAM llena: basta por hoy */
                 return 0;
             }
         }
@@ -423,13 +430,12 @@ static tex_entry *get_texture_slow(const packet *d)
 #endif
         uint32_t pixdata = (d->c1 & 0xFF00) | (d->c0 & 0xFF);
         /* limite de conversiones por frame: se reutiliza la version anterior */
-        if ((conv_this_frame >= MAX_CONV_PER_FRAME || texels_this_frame >= MAX_TEXELS_PER_FRAME) && t->ptr) {
+        if (CONV_LIMIT() && t->ptr) {
             t->last_used = frame_no;
             return t;
         }
-        if (conv_this_frame >= MAX_CONV_PER_FRAME || texels_this_frame >= MAX_TEXELS_PER_FRAME ||
-            !convert(t, &r, pixdata)) {
-            stat_why[conv_this_frame >= MAX_CONV_PER_FRAME ? 1 : texels_this_frame >= MAX_TEXELS_PER_FRAME ? 2 : 3]++;
+        if (CONV_LIMIT() || !convert(t, &r, pixdata)) {
+            stat_why[vram_full ? 3 : conv_this_frame >= MAX_CONV_PER_FRAME ? 1 : 2]++;
             if (!t->ptr)
                 t->key = 0;
             return NULL;
@@ -653,6 +659,8 @@ static int render_page(int page, int shot)
     frame_no++;
     conv_this_frame = 0;
     texels_this_frame = 0;
+    vram_full = 0;
+    conv_unlimited = hold_frames >= HOLD_UNLIMIT;
     {
         /* textura de cada poligono y numero de orden por textura */
         uint16_t nseq[3] = { 1, 1, 1 };
