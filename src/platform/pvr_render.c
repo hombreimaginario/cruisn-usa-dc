@@ -171,6 +171,9 @@ static pvr_ptr_t cpu_fb_tex, shot_tex;
 static unsigned stat_conv, stat_polys, stat_skipped, stat_pages, stat_why[4], stat_ta_timeouts;
 static uint64_t t_tex, t_wait, t_sub;
 static unsigned conv_this_frame;
+#ifdef CUSA_TEXDBG
+static unsigned dbg_new, dbg_blk, dbg_pal;
+#endif
 #define MAX_CONV_PER_FRAME 400
 #define MAX_TEXELS_PER_FRAME (1024 * 1024)
 static uint32_t texels_this_frame;
@@ -376,6 +379,9 @@ static tex_entry *get_texture_slow(const packet *d)
         return NULL;
     }
     if (t->blk_sum != g || t->pal_gen != pg || !t->ptr) {
+#ifdef CUSA_TEXDBG
+        if (!t->ptr) dbg_new++; else if (t->blk_sum != g) dbg_blk++; else dbg_pal++;
+#endif
         uint32_t pixdata = (d->c1 & 0xFF00) | (d->c0 & 0xFF);
         /* limite de conversiones por frame: se reutiliza la version anterior */
         if ((conv_this_frame >= MAX_CONV_PER_FRAME || texels_this_frame >= MAX_TEXELS_PER_FRAME) && t->ptr) {
@@ -854,6 +860,10 @@ void pvrr_stats(unsigned *conv, unsigned *polys)
     printf("  render: texturas %u ms, espera TA %u ms (%u agotadas), espera dibujo %u ms, envio %u ms, omitidos %u (huecos %u, limite %u/%u, vram %u)\n",
            (unsigned)(t_tex / 1000), (unsigned)(t_wait / 1000), stat_ta_timeouts, (unsigned)(t_rwait / 1000),
            (unsigned)(t_sub / 1000), stat_skipped, stat_why[0], stat_why[1], stat_why[2], stat_why[3]);
+#ifdef CUSA_TEXDBG
+    printf("  texdbg: nuevas %u bloque %u paleta %u\n", dbg_new, dbg_blk, dbg_pal);
+    dbg_new = dbg_blk = dbg_pal = 0;
+#endif
     if (stat_vfull)
         printf("  render: bufer de vertices lleno %u veces\n", stat_vfull);
 #endif
