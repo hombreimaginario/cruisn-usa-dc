@@ -24,7 +24,12 @@ static int16_t by_code[0x400];          /* codigo -> entrada, -1 si no hay */
 static int engine_idx[MAX_ENGINE], nengine;
 static int ready;
 
-static int skip_byte;                   /* tras el reset se descarta un byte */
+/* Tras un reset el primer comando es siempre 55AA (volumen general), a veces
+ * precedido de un byte 00 de relleno (al empezar partida) y a veces no (al
+ * encender). Antes se descartaba siempre un byte: al encender se perdia el
+ * 55 y toda la demo se interpretaba desalineada (otra musica, a volumen
+ * 255). Ahora se descarta hasta el primer 55. */
+static int resync;
 static int hi = -1;                     /* byte alto pendiente */
 static int expect;                      /* 0, 1 = volumen, 2 = motor */
 static int vol_target;                  /* -1 general, 0-3 pista */
@@ -201,7 +206,7 @@ void dcs_proto_write(uint32_t v)
         return;
     if (v & 0x100) {                     /* linea de reset del DCS */
         if (v & 1) {
-            skip_byte = 1;
+            resync = 1;
             hi = -1;
             expect = 0;
         } else {
@@ -214,9 +219,10 @@ void dcs_proto_write(uint32_t v)
         }
         return;
     }
-    if (skip_byte) {
-        skip_byte = 0;
-        return;
+    if (resync) {
+        if ((v & 0xFF) != 0x55)
+            return;
+        resync = 0;
     }
     if (hi < 0) {
         hi = v & 0xFF;
