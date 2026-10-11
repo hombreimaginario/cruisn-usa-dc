@@ -111,10 +111,9 @@ extern void (*vu_wheel_hook)(uint32_t value); /* escrituras en la placa del vola
 void vu_dma_process(void);
 /* Paquete de 15 palabras completo (sin pasar por la FIFO emulada) */
 void vu_poly_packet(const uint32_t *pkt);
-/* Z de camara de los 4 vertices del paquete (en el orden del paquete) si
- * vu_poly_zvalid; la rellenan las rutinas HLE de envio de poligonos */
-extern float vu_poly_z[4];
-extern int vu_poly_zvalid;
+/* Opacidad (0-63) del objeto cuyos poligonos se estan enviando: menos de
+ * 63 mientras aparece gradualmente (rutinas HLE, ver hle_fade_object) */
+extern int vu_poly_fade;
 void vu_video_to_rgb565(uint16_t *dst, int pitch, int page);
 
 #endif /* VUNIT_MEM_H */

@@ -291,6 +291,68 @@ static const float *inv_table(uint32_t ar2)
 /* Nucleo comun de los bucles 0x0141 y 0x0221: (x,y,z) del vertice, menos un
  * origen opcional, por la matriz de camara, mas traslacion en Z, proyeccion
  * con INVTAB. tz_addr: direccion de la traslacion Z; org: origen o NULL. */
+/* ------------------------------------------------------------------------ */
+/* Aparicion gradual de los objetos que surgen al fondo                      */
+/* ------------------------------------------------------------------------ */
+
+int hle_fade_on;                /* lo activa la plataforma */
+uint32_t hle_fade_frame;        /* contador de interrupciones de video */
+uint32_t hle_fade_started;      /* estadistica: fundidos empezados */
+
+#define FADE_LEN   17           /* interrupciones (0,3 s) */
+#define FADE_MINZ  56000.0f     /* solo lo que aparece en el ultimo tramo */
+#define FADE_SLOTS 1024
+
+static struct {
+    uint32_t obj, first, last;
+} fade_tab[FADE_SLOTS];
+static uint32_t scene_start, scene_last;
+
+/*
+ * El juego (DIRQ.ASM, DISPLAY) recorre listas de objetos y descarta los que
+ * estan mas alla de Z ~80000: cuando un objeto cruza ese limite aparece de
+ * golpe. Cada objeto es una estructura fija en memoria (AR0), asi que se
+ * reconoce de un frame a otro: si no se dibujaba en los ultimos frames y
+ * aparece lejos, sus poligonos se envian con opacidad creciente. Al empezar
+ * una escena (o tras un corte) no se funde nada durante medio segundo.
+ */
+static void fade_object(uint32_t obj, float z)
+{
+    uint32_t f = hle_fade_frame, h, i, slot = 0;
+    int found = 0, age;
+
+    vu_poly_fade = 63;
+    if (!hle_fade_on)
+        return;
+    if (f - scene_last > 10)
+        scene_start = f;
+    scene_last = f;
+    obj &= 0xFFFFFFu;
+    h = (obj * 2654435761u) >> 22;
+    for (i = 0; i < 8; i++) {
+        slot = (h + i) & (FADE_SLOTS - 1);
+        if (fade_tab[slot].obj == obj) {
+            found = 1;
+            break;
+        }
+        if (fade_tab[slot].obj == 0 || f - fade_tab[slot].last > 120)
+            break;
+    }
+    if (!found || f - fade_tab[slot].last > 6) {
+        fade_tab[slot].obj = obj;
+        if (z > FADE_MINZ && f - scene_start > 30) {
+            fade_tab[slot].first = f;
+            hle_fade_started++;
+        } else {
+            fade_tab[slot].first = f - FADE_LEN;
+        }
+    }
+    fade_tab[slot].last = f;
+    age = (int)(f - fade_tab[slot].first);
+    if (age < FADE_LEN)
+        vu_poly_fade = age * 63 / FADE_LEN;
+}
+
 static void vtx_project(uint32_t rs, uint32_t re, uint32_t tz_addr, const float *org, int imm_shift)
 {
     uint32_t *r = C.r;
@@ -308,6 +370,7 @@ static void vtx_project(uint32_t rs, uint32_t re, uint32_t tz_addr, const float 
 
     for (k = 0; k < 9; k++)
         m[k] = MF(ar5 + k);
+    fade_object(r[AR0], tz);
 
     for (k = 0; k < iters; k++) {
         uint32_t w0 = src ? src[2 * k] : RD(ar1 + 2 * k);
@@ -411,6 +474,8 @@ void hle_vtx_race(void)
     float t0 = MF(ar6 - 1), t1 = MF(ar6), t2 = MF(ar6 + 1);
     float y0 = MF(((r[DP] & 0xFF) << 16) | 0x54);
     int sh = (int32_t)(bk << 25) >> 25;
+
+    fade_object(r[AR0], t2);
     uint32_t *dst = out_ptr(ar3, iters * 3);
 
     for (k = 0; k < iters; k++) {
@@ -616,6 +681,7 @@ uint32_t hle_poly_emit(void)
             r[AR1] = ar1; r[AR2] = ar2; r[AR3] = ar3; r[AR4] = ar4; r[AR5] = ar5;
             C.r[C3X_ST] = (C.r[C3X_ST] & ~0x1Fu) | rt_nz(i0);
             C.cyc += (uint32_t)work;
+            vu_poly_fade = 63;                          /* fin del objeto */
             return POP() & 0xFFFFFFu;
         }
         /* 0537-054E: paquete de 15 palabras, directo al motor de poligonos
@@ -644,15 +710,7 @@ uint32_t hle_poly_emit(void)
             i0 >>= 16;
             i1 >>= 16;
             vu.fifo_count = 0;
-            if (ir1 == ir0 + 1) {                           /* Z de camara: niebla */
-                vu_poly_z[0] = MF(ar4 + ir0 + 2);
-                vu_poly_z[1] = MF(ar5 + ir0 + 2);
-                vu_poly_z[2] = MF(ar2 + ir0 + 2);
-                vu_poly_z[3] = MF(ar3 + ir0 + 2);
-                vu_poly_zvalid = 1;
-            }
             vu_poly_packet(pkt);                            /* 054E LDI @FIFO_INC */
-            vu_poly_zvalid = 0;
             i0 = 0;
             work += 24;
         }
@@ -666,7 +724,8 @@ uint32_t hle_poly_emit(void)
     r[AR1] = ar1; r[AR2] = ar2; r[AR3] = ar3; r[AR4] = ar4; r[AR5] = ar5;
     C.r[C3X_ST] = (C.r[C3X_ST] & ~0x1Fu) | F_Z;
     C.cyc += (uint32_t)work;
-    return POP() & 0xFFFFFFu;
+    vu_poly_fade = 63;                          /* fin del objeto */
+            return POP() & 0xFFFFFFu;
 }
 
 /*
@@ -736,6 +795,7 @@ uint32_t hle_poly_emit_pal(void)
             r[AR1] = ar1; r[AR2] = ar2; r[AR3] = ar3; r[AR4] = ar4; r[AR5] = ar5; r[AR6] = ar6;
             C.r[C3X_ST] = (C.r[C3X_ST] & ~0x1Fu) | rt_nz(rc);
             C.cyc += work;
+            vu_poly_fade = 63;                          /* fin del objeto */
             return POP() & 0xFFFFFFu;
         }
         {
@@ -763,15 +823,7 @@ uint32_t hle_poly_emit_pal(void)
             pkt[14] = i2;
             i1 >>= 16;
             vu.fifo_count = 0;
-            if (ir1 == ir0 + 1) {                           /* Z de camara: niebla */
-                vu_poly_z[0] = MF(ar4 + ir0 + 2);
-                vu_poly_z[1] = MF(ar5 + ir0 + 2);
-                vu_poly_z[2] = MF(ar2 + ir0 + 2);
-                vu_poly_z[3] = MF(ar3 + ir0 + 2);
-                vu_poly_zvalid = 1;
-            }
             vu_poly_packet(pkt);                            /* 048F LDI @FIFO_INC */
-            vu_poly_zvalid = 0;
             work += 25;
         }
         if ((int32_t)--rc < 0)                              /* fin del RPTB */
@@ -784,7 +836,8 @@ uint32_t hle_poly_emit_pal(void)
     r[AR1] = ar1; r[AR2] = ar2; r[AR3] = ar3; r[AR4] = ar4; r[AR5] = ar5; r[AR6] = ar6;
     C.r[C3X_ST] = (C.r[C3X_ST] & ~0x1Fu) | F_Z;
     C.cyc += work;
-    return POP() & 0xFFFFFFu;
+    vu_poly_fade = 63;                          /* fin del objeto */
+            return POP() & 0xFFFFFFu;
 }
 
 /*
@@ -871,6 +924,7 @@ uint32_t hle_poly_emit_quad(void)
             r[AR1] = ar1; r[AR2] = ar2; r[AR3] = ar3; r[AR4] = ar4; r[AR5] = ar5;
             C.r[C3X_ST] = (C.r[C3X_ST] & ~0x1Fu) | rt_nz(rc);
             C.cyc += work;
+            vu_poly_fade = 63;                          /* fin del objeto */
             return POP() & 0xFFFFFFu;
         }
         {
@@ -896,15 +950,7 @@ uint32_t hle_poly_emit_quad(void)
             pkt[14] = i2;
             i1 >>= 16;
             vu.fifo_count = 0;
-            if (ir1 == ir0 + 1) {                           /* Z de camara: niebla */
-                vu_poly_z[0] = MF(ar4 + ir0 + 2);
-                vu_poly_z[1] = MF(ar5 + ir0 + 2);
-                vu_poly_z[2] = MF(ar2 + ir0 + 2);
-                vu_poly_z[3] = MF(ar3 + ir0 + 2);
-                vu_poly_zvalid = 1;
-            }
             vu_poly_packet(pkt);                            /* 0595 LDI @FIFO_INC */
-            vu_poly_zvalid = 0;
             work += 23;
         }
         if ((int32_t)--rc < 0)                              /* fin del RPTB */
@@ -921,7 +967,8 @@ uint32_t hle_poly_emit_quad(void)
     r[AR1] = ar1; r[AR2] = ar2; r[AR3] = ar3; r[AR4] = ar4; r[AR5] = ar5;
     C.r[C3X_ST] = (C.r[C3X_ST] & ~0x1Fu) | F_Z;
     C.cyc += work;
-    return POP() & 0xFFFFFFu;
+    vu_poly_fade = 63;                          /* fin del objeto */
+            return POP() & 0xFFFFFFu;
 }
 
 /*

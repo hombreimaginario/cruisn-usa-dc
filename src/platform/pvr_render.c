@@ -479,22 +479,13 @@ static tex_entry *get_texture_slow(const packet *d)
  * lo que hubiera en la pagina de dibujo. */
 static int restart_pending[2];
 
-/* ---- niebla en el horizonte ----
- * Los objetos aparecen de golpe a la distancia maxima de dibujado del juego
- * (popping, igual en el arcade). Con niebla por vertice del PowerVR se
- * funden con el color del horizonte en el ultimo tramo y aparecen poco a
- * poco. Z de camara del juego: el maximo que proyecta es ~80000. */
-/* Prototipo: se activa con -DCUSA_FOG mientras se decide si se queda. */
-#ifndef FOG_START
-#define FOG_START 45000.0f
-#endif
-#ifndef FOG_END
-#define FOG_END 80000.0f
-#endif
-#ifndef FOG_MAX
-#define FOG_MAX 1.0f
-#endif
-static unsigned fog_polys;
+/* ---- aparicion gradual ----
+ * El juego deja de dibujar los objetos mas alla de Z ~80000 y aparecen de
+ * golpe al cruzar ese limite (igual en el arcade). Las rutinas HLE marcan
+ * cada objeto que aparece al fondo (vu_poly_fade, 0-63) y sus poligonos van
+ * a la lista translucida con ese alfa durante unos 0,3 s. */
+#define POLY_FADED(d) ((d)->pad != 0)
+static unsigned fade_polys;
 
 static void on_fifo_reset(void)
 {
@@ -546,25 +537,10 @@ static void on_poly(const uint32_t *d, int page)
         o->uv[2] = (uint16_t)d[12]; o->uv[3] = (uint16_t)d[13];
         o->c0 = (uint16_t)d[0]; o->c1 = (uint16_t)(d[1] & 0xFF00); o->tb = (uint16_t)d[14];
         o->pad = 0;
-#ifdef CUSA_FOG
-        if (vu_poly_zvalid) {
-            uint32_t bits = 0;
-            int k;
-            for (k = 0; k < 4; k++) {
-                float f = (vu_poly_z[k] - FOG_START) * (1.0f / (FOG_END - FOG_START));
-                int q;
-                if (f <= 0.0f)
-                    continue;
-                if (f > 1.0f)
-                    f = 1.0f;
-                f = f * f * (3.0f - 2.0f * f);          /* suave al empezar y al acabar */
-                q = (int)(f * FOG_MAX * 63.0f + 0.5f);
-                bits |= (uint32_t)q << (6 * k);
-            }
-            o->c1 |= (uint16_t)(bits & 0xFF);
-            o->pad = (uint16_t)(bits >> 8);
-            if (bits)
-                fog_polys++;
+#ifndef CUSA_NO_FADE
+        if (vu_poly_fade < 63) {
+            o->pad = (uint16_t)(64 - vu_poly_fade);     /* 1..64: transparencia */
+            fade_polys++;
         }
 #endif
     }
@@ -629,10 +605,6 @@ static void submit_list(pvr_list_t list, const draw_item *it, int n)
             }
             cxt.gen.culling = PVR_CULLING_NONE;
             cxt.depth.comparison = PVR_DEPTHCMP_GEQUAL;
-#ifdef CUSA_FOG
-            cxt.gen.fog_type = PVR_FOG_VERTEX;      /* alfa del color de desplazamiento */
-            cxt.gen.specular = true;
-#endif
             pvr_poly_compile(&hdr, &cxt);
             hp = pvr_dr_target();
             *hp = hdr;
@@ -657,14 +629,9 @@ static void submit_list(pvr_list_t list, const draw_item *it, int n)
             v->u = (float)(d->uv[vi] & 0xFF) * iw + uo;
             v->v = (float)(d->uv[vi] >> 8) * ih + vo;
             v->argb = argb;
-#ifdef CUSA_FOG
-            {
-                uint32_t fq = (((uint32_t)(d->c1 & 0xFF) | ((uint32_t)d->pad << 8)) >> (6 * vi)) & 63;
-                v->oargb = (fq * 255 / 63) << 24;
-            }
-#else
+            if (list == PVR_LIST_TR_POLY && d->pad && !(d->c0 & 0x2000))
+                v->argb = (argb & 0x00FFFFFFu) | ((uint32_t)(64 - d->pad) * 4 << 24);
             v->oargb = 0;
-#endif
             pvr_dr_commit(v);
         }
         vbytes += 4 * 32;
@@ -889,7 +856,7 @@ static int render_page(int page, int shot)
             /* DITHER (bit 13): el V-Unit pinta uno de cada dos pixeles, una
              * sombra o velo semitransparente; aqui va a la lista translucida
              * al 50 %, en el orden original */
-            if (d->c0 & 0x2000) {
+            if ((d->c0 & 0x2000) || POLY_FADED(d)) {
                 l = 2;
                 sq = 0;
             }
@@ -909,7 +876,7 @@ static int render_page(int page, int shot)
                 seq_count[l][i] += seq_count[l][i - 1];
         for (i = 0; i < m; i++) {
             tex_entry *t = unsorted[i].t;
-            if (unsorted[i].d->c0 & 0x2000)
+            if ((unsorted[i].d->c0 & 0x2000) || POLY_FADED(unsorted[i].d))
                 items[2][seq_count[2][0]++] = unsorted[i];
             else {
                 l = t ? t->pt : 0;
@@ -988,7 +955,30 @@ static void dump_shot(void)
 {
     const uint16_t *p;
     int x, y;
-#ifdef CUSA_SHOT_FULL
+#if defined(CUSA_SHOT_CROP)
+    /* recorte central de 320x192 a resolucion completa (horizonte) */
+    static const char b64[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    static char line[640 / 3 * 4 + 40];
+
+    pvr_wait_ready();
+    pvr_wait_ready();
+    p = (const uint16_t *)shot_tex;
+    for (y = 0; y < 192; y++) {
+        const uint8_t *b = (const uint8_t *)(p + (y + 112) * 640 + 160);
+        char *o = line + sprintf(line, "SHOTC %03d ", y);
+        for (x = 0; x + 2 < 640; x += 3) {
+            uint32_t v = b[x] << 16 | b[x + 1] << 8 | b[x + 2];
+            *o++ = b64[v >> 18]; *o++ = b64[(v >> 12) & 63];
+            *o++ = b64[(v >> 6) & 63]; *o++ = b64[v & 63];
+        }
+        {   /* 640 = 3*213 + 1 */
+            uint32_t v = b[639] << 16;
+            *o++ = b64[v >> 18]; *o++ = b64[(v >> 12) & 63]; *o++ = '='; *o++ = '=';
+        }
+        *o = 0;
+        puts(line);
+    }
+#elif defined(CUSA_SHOT_FULL)
     /* 640x480 completos, cada linea en base64 (RGB565 little endian) */
     static const char b64[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     static char line[1280 / 3 * 4 + 32];
@@ -1050,9 +1040,6 @@ int pvrr_init(void)
     };
     pvr_init(&params);
     pvr_set_bg_color(0.0f, 0.0f, 0.0f);
-#ifdef CUSA_FOG
-    pvr_fog_vertex_color(0.78f, 0.84f, 0.92f);  /* bruma clara (provisional) */
-#endif
     printf("VRAM libre para texturas: %u KB\n", (unsigned)(pvr_mem_available() / 1024));
     page_polys[0] = malloc(sizeof(packet) * MAX_POLYS);
     page_polys[1] = malloc(sizeof(packet) * MAX_POLYS);

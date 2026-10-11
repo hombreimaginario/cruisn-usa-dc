@@ -306,6 +306,7 @@ static unsigned dv_idle_wait, dv_idle_late, dv_event, dv_forced, dv_idle_calls;
 static void vblank(void)
 {
     cusa_frame = ++frame;
+    hle_fade_frame = frame;
     wd_heartbeat++;
     wd_phase = "render";
 #ifdef CUSA_WD_TEST
@@ -356,7 +357,9 @@ static void vblank(void)
         printf("  vbl: espera %u, tarde %u, durante juego %u, forzadas %u\n", dv_idle_wait, dv_idle_late, dv_event, dv_forced);
         dv_idle_wait = dv_idle_late = dv_event = dv_forced = dv_idle_calls = 0;
 #endif
-        printf("  modelos: %u, descartados por distancia %u\n", (unsigned)hle_lod_calls, (unsigned)hle_lod_culled);
+        printf("  modelos: %u, descartados por distancia %u, fundidos %u\n", (unsigned)hle_lod_calls,
+               (unsigned)hle_lod_culled, (unsigned)hle_fade_started);
+        hle_fade_started = 0;
         hle_lod_calls = hle_lod_culled = 0;
 #ifdef CUSA_LODHIST
         {
@@ -619,6 +622,9 @@ int main(int argc, char **argv)
     vu_raise_irq = rc_irq;
     vu_skip_memtests();
     rt_reset();
+#ifndef CUSA_NO_FADE
+    hle_fade_on = 1;
+#endif
 #ifdef CUSA_LOD
     hle_lod_dist2 = (float)CUSA_LOD * (float)CUSA_LOD;
 #endif

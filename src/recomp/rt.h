@@ -297,6 +297,9 @@ uint32_t hle_model_visible(void);
 uint32_t hle_zsort(void);
 uint32_t hle_obj_near(void);
 uint32_t hle_model_lod(void);
+/* Aparicion gradual de objetos lejanos (hle.c) */
+extern int hle_fade_on;
+extern uint32_t hle_fade_frame, hle_fade_started;
 /* Distancia de dibujado de modelos (al cuadrado, unidades del juego);
  * 0 = como el original */
 extern float hle_lod_dist2;
