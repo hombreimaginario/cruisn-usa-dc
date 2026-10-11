@@ -211,7 +211,11 @@ static void read_inputs(void)
         vu.in.gas = f >= 2400 ? 0xE0 : 0;
         vu.in.brake = 0;
         if (f >= 2600)                  /* zigzag entre el trafico */
+#ifdef AUTO_STEER
+            vu.in.wheel = (f / 150) % 2 ? 0x80 - AUTO_STEER : 0x80 + AUTO_STEER;
+#else
             vu.in.wheel = (f / 150) % 2 ? 0x50 : 0xB0;
+#endif
     }
 #endif
 }

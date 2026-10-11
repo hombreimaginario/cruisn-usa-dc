@@ -580,6 +580,7 @@ uint32_t hle_poly_emit(void)
         ar2 = (r3 & r7) * 3;
         /* 052A-052C: espera de FIFO (nunca llena en la emulacion) */
         wx4 = MW(ar4 + ir0); x4 = c2f(wx4); wy4 = MW(ar4 + ir1); y4 = c2f(wy4);
+
         wx5 = MW(ar5 + ir0); x5 = c2f(wx5); wy5 = MW(ar5 + ir1); y5 = c2f(wy5);
         wx2 = MW(ar2 + ir0); x2 = c2f(wx2); wy2 = MW(ar2 + ir1); y2 = c2f(wy2);
         f1 = x5 - x4;                                       /* 052D */
@@ -643,7 +644,15 @@ uint32_t hle_poly_emit(void)
             i0 >>= 16;
             i1 >>= 16;
             vu.fifo_count = 0;
+            if (ir1 == ir0 + 1) {                           /* Z de camara: niebla */
+                vu_poly_z[0] = MF(ar4 + ir0 + 2);
+                vu_poly_z[1] = MF(ar5 + ir0 + 2);
+                vu_poly_z[2] = MF(ar2 + ir0 + 2);
+                vu_poly_z[3] = MF(ar3 + ir0 + 2);
+                vu_poly_zvalid = 1;
+            }
             vu_poly_packet(pkt);                            /* 054E LDI @FIFO_INC */
+            vu_poly_zvalid = 0;
             i0 = 0;
             work += 24;
         }
@@ -754,7 +763,15 @@ uint32_t hle_poly_emit_pal(void)
             pkt[14] = i2;
             i1 >>= 16;
             vu.fifo_count = 0;
+            if (ir1 == ir0 + 1) {                           /* Z de camara: niebla */
+                vu_poly_z[0] = MF(ar4 + ir0 + 2);
+                vu_poly_z[1] = MF(ar5 + ir0 + 2);
+                vu_poly_z[2] = MF(ar2 + ir0 + 2);
+                vu_poly_z[3] = MF(ar3 + ir0 + 2);
+                vu_poly_zvalid = 1;
+            }
             vu_poly_packet(pkt);                            /* 048F LDI @FIFO_INC */
+            vu_poly_zvalid = 0;
             work += 25;
         }
         if ((int32_t)--rc < 0)                              /* fin del RPTB */
@@ -879,7 +896,15 @@ uint32_t hle_poly_emit_quad(void)
             pkt[14] = i2;
             i1 >>= 16;
             vu.fifo_count = 0;
+            if (ir1 == ir0 + 1) {                           /* Z de camara: niebla */
+                vu_poly_z[0] = MF(ar4 + ir0 + 2);
+                vu_poly_z[1] = MF(ar5 + ir0 + 2);
+                vu_poly_z[2] = MF(ar2 + ir0 + 2);
+                vu_poly_z[3] = MF(ar3 + ir0 + 2);
+                vu_poly_zvalid = 1;
+            }
             vu_poly_packet(pkt);                            /* 0595 LDI @FIFO_INC */
+            vu_poly_zvalid = 0;
             work += 23;
         }
         if ((int32_t)--rc < 0)                              /* fin del RPTB */
@@ -952,6 +977,7 @@ uint32_t hle_obj_near(void)
 /* ------------------------------------------------------------------------ */
 
 float hle_lod_dist2;
+
 uint32_t hle_lod_calls, hle_lod_culled;
 #ifdef CUSA_LODHIST
 uint32_t hle_lod_hist[24];

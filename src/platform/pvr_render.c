@@ -40,7 +40,9 @@
 typedef struct {
     int16_t x[4], y[4];
     uint16_t uv[4];             /* u en el byte bajo, v en el alto */
-    uint16_t c0, c1, tb, pad;   /* palabras 0, 1 y 14 (16 bits bajos) */
+    uint16_t c0, c1, tb, pad;   /* palabras 0, 1 (byte alto) y 14 (16 bits bajos);
+                                 * niebla de los 4 vertices, 6 bits cada uno, en
+                                 * el byte bajo de c1 y en pad */
 } __attribute__((aligned(32))) packet;
 
 static packet *page_polys[2];
@@ -173,6 +175,9 @@ static pvr_ptr_t cpu_fb_tex, shot_tex;
 static unsigned stat_conv, stat_polys, stat_skipped, stat_pages, stat_why[4], stat_ta_timeouts;
 static uint64_t t_tex, t_wait, t_sub;
 static unsigned conv_this_frame, stat_tiny;
+#ifndef CUSA_NO_DIAG
+static unsigned diag_conv;
+#endif
 #ifdef CUSA_POLYDBG
 static unsigned dbg_big, dbg_huge;
 static int dbg_maxc;
@@ -331,6 +336,9 @@ static int convert(tex_entry *t, const tex_req *r, uint32_t pixdata)
 #ifdef CUSA_TEXDBG
     dbg_ktex += n / 1024;
 #endif
+#ifndef CUSA_NO_DIAG
+    diag_conv++;
+#endif
     stat_conv++;
     return 1;
 }
@@ -471,6 +479,23 @@ static tex_entry *get_texture_slow(const packet *d)
  * lo que hubiera en la pagina de dibujo. */
 static int restart_pending[2];
 
+/* ---- niebla en el horizonte ----
+ * Los objetos aparecen de golpe a la distancia maxima de dibujado del juego
+ * (popping, igual en el arcade). Con niebla por vertice del PowerVR se
+ * funden con el color del horizonte en el ultimo tramo y aparecen poco a
+ * poco. Z de camara del juego: el maximo que proyecta es ~80000. */
+/* Prototipo: se activa con -DCUSA_FOG mientras se decide si se queda. */
+#ifndef FOG_START
+#define FOG_START 45000.0f
+#endif
+#ifndef FOG_END
+#define FOG_END 80000.0f
+#endif
+#ifndef FOG_MAX
+#define FOG_MAX 1.0f
+#endif
+static unsigned fog_polys;
+
 static void on_fifo_reset(void)
 {
     /* La FIFO se reinicia al terminar un frame; el siguiente poligono que
@@ -519,7 +544,29 @@ static void on_poly(const uint32_t *d, int page)
         o->y[0] = y0; o->y[1] = y1; o->y[2] = y2; o->y[3] = y3;
         o->uv[0] = (uint16_t)d[10]; o->uv[1] = (uint16_t)d[11];
         o->uv[2] = (uint16_t)d[12]; o->uv[3] = (uint16_t)d[13];
-        o->c0 = (uint16_t)d[0]; o->c1 = (uint16_t)d[1]; o->tb = (uint16_t)d[14];
+        o->c0 = (uint16_t)d[0]; o->c1 = (uint16_t)(d[1] & 0xFF00); o->tb = (uint16_t)d[14];
+        o->pad = 0;
+#ifdef CUSA_FOG
+        if (vu_poly_zvalid) {
+            uint32_t bits = 0;
+            int k;
+            for (k = 0; k < 4; k++) {
+                float f = (vu_poly_z[k] - FOG_START) * (1.0f / (FOG_END - FOG_START));
+                int q;
+                if (f <= 0.0f)
+                    continue;
+                if (f > 1.0f)
+                    f = 1.0f;
+                f = f * f * (3.0f - 2.0f * f);          /* suave al empezar y al acabar */
+                q = (int)(f * FOG_MAX * 63.0f + 0.5f);
+                bits |= (uint32_t)q << (6 * k);
+            }
+            o->c1 |= (uint16_t)(bits & 0xFF);
+            o->pad = (uint16_t)(bits >> 8);
+            if (bits)
+                fog_polys++;
+        }
+#endif
     }
 }
 
@@ -582,6 +629,10 @@ static void submit_list(pvr_list_t list, const draw_item *it, int n)
             }
             cxt.gen.culling = PVR_CULLING_NONE;
             cxt.depth.comparison = PVR_DEPTHCMP_GEQUAL;
+#ifdef CUSA_FOG
+            cxt.gen.fog_type = PVR_FOG_VERTEX;      /* alfa del color de desplazamiento */
+            cxt.gen.specular = true;
+#endif
             pvr_poly_compile(&hdr, &cxt);
             hp = pvr_dr_target();
             *hp = hdr;
@@ -606,7 +657,14 @@ static void submit_list(pvr_list_t list, const draw_item *it, int n)
             v->u = (float)(d->uv[vi] & 0xFF) * iw + uo;
             v->v = (float)(d->uv[vi] >> 8) * ih + vo;
             v->argb = argb;
+#ifdef CUSA_FOG
+            {
+                uint32_t fq = (((uint32_t)(d->c1 & 0xFF) | ((uint32_t)d->pad << 8)) >> (6 * vi)) & 63;
+                v->oargb = (fq * 255 / 63) << 24;
+            }
+#else
             v->oargb = 0;
+#endif
             pvr_dr_commit(v);
         }
         vbytes += 4 * 32;
@@ -699,7 +757,7 @@ static pvr_ptr_t diag_tex;
 static uint16_t diag_buf[DIAG_W * DIAG_H] __attribute__((aligned(32)));
 static int diag_dirty;
 static uint64_t diag_t;
-static unsigned diag_pages, diag_holds, diag_conv0;
+static unsigned diag_pages, diag_holds;
 static volatile uint32_t pvr_errs[6];
 
 static void pvr_err_irq(uint32_t code, void *data)
@@ -730,12 +788,11 @@ static void diag_update(void)
     memset(&st, 0, sizeof(st));
     pvr_get_stats(&st);
     snprintf(line, sizeof(line), "I%u H%u C%u T%lu V%u R%u E%lu.%lu.%lu.%lu.%lu.%lu",
-             diag_pages, diag_holds, stat_conv - diag_conv0, (unsigned long)wd_counters[WD_TA_TIMEOUT],
+             diag_pages, diag_holds, diag_conv, (unsigned long)wd_counters[WD_TA_TIMEOUT],
              (unsigned)(st.vtx_buffer_used_max / 1024), (unsigned)(st.rnd_last_time / 1000000),
              (unsigned long)pvr_errs[0], (unsigned long)pvr_errs[1], (unsigned long)pvr_errs[2],
              (unsigned long)pvr_errs[3], (unsigned long)pvr_errs[4], (unsigned long)pvr_errs[5]);
-    diag_pages = diag_holds = 0;
-    diag_conv0 = stat_conv;
+    diag_pages = diag_holds = diag_conv = 0;
     memset(diag_buf, 0, sizeof(diag_buf));
     {
         int i;
@@ -993,6 +1050,9 @@ int pvrr_init(void)
     };
     pvr_init(&params);
     pvr_set_bg_color(0.0f, 0.0f, 0.0f);
+#ifdef CUSA_FOG
+    pvr_fog_vertex_color(0.78f, 0.84f, 0.92f);  /* bruma clara (provisional) */
+#endif
     printf("VRAM libre para texturas: %u KB\n", (unsigned)(pvr_mem_available() / 1024));
     page_polys[0] = malloc(sizeof(packet) * MAX_POLYS);
     page_polys[1] = malloc(sizeof(packet) * MAX_POLYS);
