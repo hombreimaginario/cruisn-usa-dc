@@ -294,6 +294,9 @@ static void rc_irq(int bit)
 
 static uint64_t idle_us;               /* tiempo esperando la interrupcion */
 static unsigned vbl_hist[5];
+#ifdef CUSA_VBLDBG
+static unsigned dv_idle_wait, dv_idle_late, dv_event, dv_forced, dv_idle_calls;
+#endif
 
 /* Lo que pasa en cada interrupcion de video (INT0, 57 por segundo) */
 static void vblank(void)
@@ -345,6 +348,23 @@ static void vblank(void)
                frame, (unsigned)vu.polys_frame, drawn, conv, pages, (unsigned)(t - t0), (unsigned)(idle_us / 1000));
         printf("  interrupciones por imagen: 1:%u 2:%u 3:%u 4:%u 5+:%u\n",
                vbl_hist[0], vbl_hist[1], vbl_hist[2], vbl_hist[3], vbl_hist[4]);
+#ifdef CUSA_VBLDBG
+        printf("  vbl: espera %u, tarde %u, durante juego %u, forzadas %u\n", dv_idle_wait, dv_idle_late, dv_event, dv_forced);
+        dv_idle_wait = dv_idle_late = dv_event = dv_forced = dv_idle_calls = 0;
+#endif
+        printf("  modelos: %u, descartados por distancia %u\n", (unsigned)hle_lod_calls, (unsigned)hle_lod_culled);
+        hle_lod_calls = hle_lod_culled = 0;
+#ifdef CUSA_LODHIST
+        {
+            extern uint32_t hle_lod_hist[24];
+            int b;
+            printf("  distancias (2^b):");
+            for (b = 0; b < 24; b++)
+                printf(" %u", (unsigned)hle_lod_hist[b]);
+            printf("\n");
+            memset(hle_lod_hist, 0, sizeof(hle_lod_hist));
+        }
+#endif
 #endif
         idle_us = 0;
         memset(vbl_hist, 0, sizeof(vbl_hist));
@@ -410,6 +430,9 @@ static uint64_t next_vbl_us;
  * tiempo real (en la carrera de prueba, 22-28 imagenes por segundo).
  */
 #define NFRAMES_MAX 3
+#ifndef VBL_DEBT
+#define VBL_DEBT 2
+#endif
 #ifndef VBL_HOLD_US
 #define VBL_HOLD_US 8000
 #endif
@@ -417,9 +440,14 @@ static int vbl_since_flip, last_flip_page = -1;
 
 static void vblank_due(uint64_t now)
 {
+    /* Si el juego va atrasado se recuperan hasta VBL_DEBT interrupciones
+     * seguidas: en las pantallas de elegir coche/carrera el juego hace un
+     * tick pesado y dos ligeros por imagen, y sin recuperar cada tick ligero
+     * esperaba una interrupcion entera (iba al 60 % de velocidad con la
+     * mitad del tiempo libre). Mas atrasado que eso, no se acumula. */
     next_vbl_us += VBL_US;
-    if (now > next_vbl_us)
-        next_vbl_us = now + VBL_US;     /* atrasados: no acumular */
+    if (now > next_vbl_us + VBL_DEBT * VBL_US)
+        next_vbl_us = now + VBL_US;
     vblank();
     if ((vu.page_control & 1) != last_flip_page) {
         last_flip_page = vu.page_control & 1;
@@ -444,6 +472,10 @@ void rt_platform_idle(void)
     now = timer_us_gettime64();
     if (!next_vbl_us)
         next_vbl_us = now + VBL_US;
+#ifdef CUSA_VBLDBG
+    dv_idle_calls++;
+    if (now < next_vbl_us) dv_idle_wait++; else dv_idle_late++;
+#endif
     {
         uint64_t t = now;
         while (now < next_vbl_us) {
@@ -475,6 +507,9 @@ void rt_platform_event(void)
      * que el juego sigue a su velocidad. */
     if (vbl_since_flip == 0 && now < next_vbl_us + VBL_HOLD_US)
         return;
+#ifdef CUSA_VBLDBG
+    if (vbl_since_flip >= NFRAMES_MAX - 1) dv_forced++; else dv_event++;
+#endif
     vblank_due(now);
 }
 #endif
@@ -580,6 +615,9 @@ int main(int argc, char **argv)
     vu_raise_irq = rc_irq;
     vu_skip_memtests();
     rt_reset();
+#ifdef CUSA_LOD
+    hle_lod_dist2 = (float)CUSA_LOD * (float)CUSA_LOD;
+#endif
 #ifdef CUSA_PROF
     prof_start();
 #endif

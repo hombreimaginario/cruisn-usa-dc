@@ -58,6 +58,7 @@ typedef struct {
     uint16_t w, h;              /* tamano (potencias de 2) */
     uint8_t  u0, v0;            /* esquina en la pagina de 256x256 */
     uint8_t  pt;                /* lista punch-through */
+    uint8_t  half;              /* guardada a media resolucion */
     uint16_t seq;               /* orden de primer uso en el frame actual */
     uint32_t seq_frame;
     float iw, ih;               /* 1/w, 1/h */
@@ -171,7 +172,7 @@ static pvr_ptr_t cpu_fb_tex, shot_tex;
 
 static unsigned stat_conv, stat_polys, stat_skipped, stat_pages, stat_why[4], stat_ta_timeouts;
 static uint64_t t_tex, t_wait, t_sub;
-static unsigned conv_this_frame;
+static unsigned conv_this_frame, stat_tiny;
 #ifdef CUSA_POLYDBG
 static unsigned dbg_big, dbg_huge;
 static int dbg_maxc;
@@ -180,6 +181,12 @@ static int dbg_maxc;
 static unsigned dbg_new, dbg_blk, dbg_pal, dbg_evict, dbg_ktex;
 #endif
 #define MAX_CONV_PER_FRAME 400
+/* Texturas de este tamano (en texeles del arcade) o mayores se guardan a
+ * media resolucion: una cuarta parte de VRAM y de conversion. Son las del
+ * suelo, el cielo y los decorados grandes; se ven algo mas borrosas. */
+#ifndef TEX_HALF_TEXELS
+#define TEX_HALF_TEXELS (128 * 128)
+#endif
 #define MAX_TEXELS_PER_FRAME (1024 * 1024)
 /* Despues de retener la imagen anterior HOLD_UNLIMIT frames seguidos por
  * texturas pendientes, se convierten todas de una vez (un frame lento) en
@@ -269,7 +276,7 @@ static int convert(tex_entry *t, const tex_req *r, uint32_t pixdata)
     const uint8_t *src = vu.texram;
     const uint16_t *cram = &vu.coloram[(r->pal & 0x7F) << 8];
     uint16_t nzr_col = vu.coloram[pixdata & 0x7FFF];
-    uint32_t x, y, n = t->w * t->h, w = t->w;
+    uint32_t x, y, n = t->w * t->h, w = t->w, st = t->half ? 2 : 1;
     static uint16_t rowbuf[256] __attribute__((aligned(32)));
     uint16_t lut[256];
     uint32_t i, *d;
@@ -294,12 +301,12 @@ static int convert(tex_entry *t, const tex_req *r, uint32_t pixdata)
     vram_guard();
     d = sq_lock((void *)(((uintptr_t)t->ptr & 0xFFFFFF) | PVR_TA_TEX_MEM));
     for (y = 0; y < t->h; y++) {
-        const uint8_t *row = src + ((r->base * 256 + ((r->v0 + y) & 0xFF) * 256) & (sizeof(vu.texram) - 1));
+        const uint8_t *row = src + ((r->base * 256 + ((r->v0 + y * st) & 0xFF) * 256) & (sizeof(vu.texram) - 1));
         /* con 8 de ancho caben dos lineas en cada bloque de 32 bytes */
         uint16_t *o = rowbuf + (w == 8 ? (y & 1) * 8 : 0);
         const uint32_t *q = (const uint32_t *)rowbuf;
         uint32_t chunks;
-        if (r->u0 + w <= 256) {
+        if (st == 1 && r->u0 + w <= 256) {
             const uint8_t *p = row + r->u0;
             for (x = 0; x < w; x += 4) {
                 o[0] = lut[p[0]]; o[1] = lut[p[1]];
@@ -308,7 +315,7 @@ static int convert(tex_entry *t, const tex_req *r, uint32_t pixdata)
             }
         } else {
             for (x = 0; x < w; x++)
-                *o++ = lut[row[(r->u0 + x) & 0xFF]];
+                *o++ = lut[row[(r->u0 + x * st) & 0xFF]];
         }
         if (w == 8 && !(y & 1))
             continue;
@@ -415,6 +422,11 @@ static tex_entry *get_texture_slow(const packet *d)
             t->key = key;
             t->w = (uint16_t)r.w;
             t->h = (uint16_t)r.h;
+            if (r.w * r.h >= TEX_HALF_TEXELS) {
+                t->w >>= 1;
+                t->h >>= 1;
+                t->half = 1;
+            }
             t->u0 = (uint8_t)r.u0;
             t->v0 = (uint8_t)r.v0;
             t->pt = (r.zs || r.nzr) ? 1 : 0;
@@ -494,6 +506,12 @@ static void on_poly(const uint32_t *d, int page)
             if (m > 8192) dbg_huge++;
         }
 #endif
+        /* los cuatro vertices en el mismo pixel: no se veria nada (objetos
+         * lejanos con muchos poligonos) */
+        if (x0 == x1 && x0 == x2 && x0 == x3 && y0 == y1 && y0 == y2 && y0 == y3) {
+            stat_tiny++;
+            return;
+        }
         if (page_npolys[page] >= MAX_POLYS)
             return;
         o = &page_polys[page][page_npolys[page]++];
@@ -1055,6 +1073,8 @@ void pvrr_stats(unsigned *conv, unsigned *polys)
     }
     dbg_new = dbg_blk = dbg_pal = dbg_evict = dbg_ktex = 0;
 #endif
+    printf("  render: diminutos descartados %u\n", stat_tiny);
+    stat_tiny = 0;
     if (stat_vfull)
         printf("  render: bufer de vertices lleno %u veces\n", stat_vfull);
 #endif

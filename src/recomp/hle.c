@@ -948,6 +948,71 @@ uint32_t hle_obj_near(void)
 }
 
 /* ------------------------------------------------------------------------ */
+/* Distancia de dibujado (entrada de la rutina 0x20FF)                       */
+/* ------------------------------------------------------------------------ */
+
+float hle_lod_dist2;
+uint32_t hle_lod_calls, hle_lod_culled;
+#ifdef CUSA_LODHIST
+uint32_t hle_lod_hist[24];
+#endif
+
+/*
+ * La rutina 0x20FF transforma los vertices de un modelo (objeto en AR2,
+ * camara en *R2) y comprueba si alguno de sus poligonos se ve; sale con el
+ * acarreo a 1 si hay que dibujarlo. Es lo que mas cuesta en los circuitos
+ * cargados. Con hle_lod_dist2 > 0, los modelos mas lejanos que esa
+ * distancia en el plano XZ se dan por no visibles sin transformarlos
+ * (aparecen algo mas cerca que en el arcade). Si no, se hacen los PUSH de la
+ * entrada y se sigue con el codigo original en 0x2107.
+ */
+uint32_t hle_model_lod(void)
+{
+    uint32_t *r = C.r;
+    hle_lod_calls++;
+#ifdef CUSA_LODHIST
+    {
+        uint32_t cam, ar2 = r[AR2];
+        float dx, dz, d2;
+        int b = 0;
+        SYNC_I(2);
+        cam = r[R2];
+        dx = MF(ar2 + 1) - MF(cam);
+        dz = MF(ar2 + 3) - MF(cam + 2);
+        d2 = dx * dx + dz * dz;
+        while (b < 23 && d2 >= (float)(1u << (2 * b)) * 4.0f)
+            b++;
+        hle_lod_hist[b]++;
+    }
+#endif
+    if (hle_lod_dist2 > 0.0f) {
+        uint32_t cam, ar2 = r[AR2];
+        float dx, dz;
+        SYNC_I(2);
+        cam = r[R2];
+        dx = MF(ar2 + 1) - MF(cam);
+        dz = MF(ar2 + 3) - MF(cam + 2);
+        if (dx * dx + dz * dz > hle_lod_dist2) {
+            hle_lod_culled++;
+            C.r[C3X_ST] &= ~F_C;                    /* 216B ANDN 1,ST */
+            C.cyc += 20;
+            return POP() & 0xFFFFFFu;               /* RETSU */
+        }
+    }
+    SYNC_I(4);
+    PUSH(r[4]);
+    SYNC_I(5);
+    PUSH(r[5]);
+    PUSH(r[AR1]);
+    PUSH(r[AR3]);
+    PUSH(r[AR4]);
+    PUSH(r[AR5]);
+    PUSH(r[AR6]);
+    PUSH(r[AR7]);
+    return 0x002107u;
+}
+
+/* ------------------------------------------------------------------------ */
 /* Prueba de visibilidad de modelo (bucle RPTB 0x213E-0x216A)                */
 /* ------------------------------------------------------------------------ */
 

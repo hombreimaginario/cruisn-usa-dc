@@ -296,6 +296,11 @@ uint32_t hle_poly_emit_quad(void);
 uint32_t hle_model_visible(void);
 uint32_t hle_zsort(void);
 uint32_t hle_obj_near(void);
+uint32_t hle_model_lod(void);
+/* Distancia de dibujado de modelos (al cuadrado, unidades del juego);
+ * 0 = como el original */
+extern float hle_lod_dist2;
+extern uint32_t hle_lod_calls, hle_lod_culled;
 float    rt_lde(float dst, float src);
 float    rt_ldm(float dst, float src);
 
