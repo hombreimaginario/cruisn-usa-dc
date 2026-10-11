@@ -172,6 +172,10 @@ static pvr_ptr_t cpu_fb_tex, shot_tex;
 static unsigned stat_conv, stat_polys, stat_skipped, stat_pages, stat_why[4], stat_ta_timeouts;
 static uint64_t t_tex, t_wait, t_sub;
 static unsigned conv_this_frame;
+#ifdef CUSA_POLYDBG
+static unsigned dbg_big, dbg_huge;
+static int dbg_maxc;
+#endif
 #ifdef CUSA_TEXDBG
 static unsigned dbg_new, dbg_blk, dbg_pal, dbg_evict, dbg_ktex;
 #endif
@@ -477,6 +481,19 @@ static void on_poly(const uint32_t *d, int page)
         if ((x0 < 0 && x1 < 0 && x2 < 0 && x3 < 0) || (x0 >= 512 && x1 >= 512 && x2 >= 512 && x3 >= 512) ||
             (y0 < 0 && y1 < 0 && y2 < 0 && y3 < 0) || (y0 >= 400 && y1 >= 400 && y2 >= 400 && y3 >= 400))
             return;
+#ifdef CUSA_POLYDBG
+        {
+            int m = 0, k;
+            int16_t c[8] = { x0, x1, x2, x3, y0, y1, y2, y3 };
+            for (k = 0; k < 8; k++) {
+                int a = c[k] < 0 ? -c[k] : c[k];
+                if (a > m) m = a;
+            }
+            if (m > dbg_maxc) dbg_maxc = m;
+            if (m > 2048) dbg_big++;
+            if (m > 8192) dbg_huge++;
+        }
+#endif
         if (page_npolys[page] >= MAX_POLYS)
             return;
         o = &page_polys[page][page_npolys[page]++];
@@ -650,6 +667,110 @@ static void draw_cpu_framebuffer(void)
 
 static int hold_frames, cpu_fb_ready;
 
+/* ---- marcador de diagnostico para la consola real ----
+ * Una linea abajo a la izquierda, actualizada cada segundo. En Flycast el
+ * PowerVR no falla nunca, asi que hace falta ver los numeros en la tele:
+ *   I imagenes/s  H imagenes retenidas/s  C texturas convertidas/s
+ *   T esperas del TA agotadas (total)  V KB maximos del bufer de vertices
+ *   R ms del ultimo dibujado  E errores del PowerVR (ISP sin memoria, strip,
+ *   OPB sin memoria, entrada TA, desbordamiento TA, parametros sin memoria) */
+#ifndef CUSA_NO_DIAG
+#define DIAG_W 512
+#define DIAG_H 32
+static pvr_ptr_t diag_tex;
+static uint16_t diag_buf[DIAG_W * DIAG_H] __attribute__((aligned(32)));
+static int diag_dirty;
+static uint64_t diag_t;
+static unsigned diag_pages, diag_holds, diag_conv0;
+static volatile uint32_t pvr_errs[6];
+
+static void pvr_err_irq(uint32_t code, void *data)
+{
+    (void)data;
+    if (code - ASIC_EVT_PVR_ISP_OUTOFMEM < 6)
+        pvr_errs[code - ASIC_EVT_PVR_ISP_OUTOFMEM]++;
+}
+
+static void diag_init(void)
+{
+    uint32_t c;
+    for (c = ASIC_EVT_PVR_ISP_OUTOFMEM; c <= ASIC_EVT_PVR_TA_INPUT_OVERFLOW; c++) {
+        asic_evt_set_handler(c, pvr_err_irq, NULL);
+        asic_evt_enable(c, ASIC_IRQ_DEFAULT);
+    }
+    diag_tex = pool_alloc(DIAG_W * DIAG_H * 2);
+}
+
+static void diag_update(void)
+{
+    uint64_t now = timer_ms_gettime64();
+    pvr_stats_t st;
+    char line[64];
+    if (now - diag_t < 1000)
+        return;
+    diag_t = now;
+    memset(&st, 0, sizeof(st));
+    pvr_get_stats(&st);
+    snprintf(line, sizeof(line), "I%u H%u C%u T%lu V%u R%u E%lu.%lu.%lu.%lu.%lu.%lu",
+             diag_pages, diag_holds, stat_conv - diag_conv0, (unsigned long)wd_counters[WD_TA_TIMEOUT],
+             (unsigned)(st.vtx_buffer_used_max / 1024), (unsigned)(st.rnd_last_time / 1000000),
+             (unsigned long)pvr_errs[0], (unsigned long)pvr_errs[1], (unsigned long)pvr_errs[2],
+             (unsigned long)pvr_errs[3], (unsigned long)pvr_errs[4], (unsigned long)pvr_errs[5]);
+    diag_pages = diag_holds = 0;
+    diag_conv0 = stat_conv;
+    memset(diag_buf, 0, sizeof(diag_buf));
+    {
+        int i;
+        for (i = 0; i < DIAG_W * DIAG_H; i++)
+            diag_buf[i] = 0x8000;           /* negro opaco */
+    }
+    tf_draw(diag_buf + 4 * DIAG_W + 4, DIAG_W, line, 0xFFFF, 0x8000);
+    diag_dirty = 1;
+}
+
+static void diag_upload(void)
+{
+    if (diag_dirty && diag_tex) {
+        vram_guard();
+        pvr_txr_load(diag_buf, diag_tex, sizeof(diag_buf));
+        diag_dirty = 0;
+    }
+}
+
+static void diag_draw(void)
+{
+    pvr_poly_cxt_t cxt;
+    pvr_poly_hdr_t hdr;
+    pvr_vertex_t v;
+    int k;
+    static const float xs[4] = { 0, DIAG_W, 0, DIAG_W }, ys[4] = { 480 - DIAG_H, 480 - DIAG_H, 480, 480 };
+    static const float us[4] = { 0, 1, 0, 1 }, vs[4] = { 0, 0, 1, 1 };
+    if (!diag_tex)
+        return;
+    pvr_poly_cxt_txr(&cxt, PVR_LIST_OP_POLY, PVR_TXRFMT_ARGB1555 | PVR_TXRFMT_NONTWIDDLED,
+                     DIAG_W, DIAG_H, diag_tex, PVR_FILTER_NONE);
+    cxt.txr.env = PVR_TXRENV_REPLACE;
+    cxt.gen.culling = PVR_CULLING_NONE;
+    cxt.depth.comparison = PVR_DEPTHCMP_GEQUAL;
+    pvr_poly_compile(&hdr, &cxt);
+    pvr_prim(&hdr, sizeof(hdr));
+    for (k = 0; k < 4; k++) {
+        v.flags = k == 3 ? PVR_CMD_VERTEX_EOL : PVR_CMD_VERTEX;
+        v.x = xs[k];
+        v.y = ys[k];
+        v.z = 4.0f;                         /* por encima de todo */
+        v.u = us[k];
+        v.v = vs[k];
+        v.argb = 0xFFFFFFFFu;
+        v.oargb = 0;
+        pvr_prim(&v, sizeof(v));
+    }
+}
+#else
+#define diag_upload() ((void)0)
+#define diag_draw() ((void)0)
+#endif
+
 static int render_page(int page, int shot)
 {
     unsigned skipped_now = 0;
@@ -734,6 +855,9 @@ static int render_page(int page, int shot)
      * mostrar trozos; como mucho unos 30 frames seguidos. */
     if (skipped_now && hold_frames < 30) {
         hold_frames++;
+#ifndef CUSA_NO_DIAG
+        diag_holds++;
+#endif
         return 0;
     }
     hold_frames = 0;
@@ -753,6 +877,7 @@ static int render_page(int page, int shot)
     }
     /* la textura de la pantalla de la CPU se sube antes de empezar el frame */
     cpu_fb_ready = n == 0 && upload_cpu_framebuffer(page);
+    diag_upload();
     if (shot && shot_tex) {
         pvr_scene_begin_rtt(shot_tex, 640, 480, 640);
     } else {
@@ -770,6 +895,7 @@ static int render_page(int page, int shot)
         }
         submit_list(PVR_LIST_OP_POLY, items[0], n_op);
     }
+    diag_draw();
     pvr_list_finish();
     pvr_list_begin(PVR_LIST_PT_POLY);
     submit_list(PVR_LIST_PT_POLY, items[1], n_pt);
@@ -840,9 +966,12 @@ int pvrr_init(void)
      * el bloque de texturas bajo de 5,5 a 3,9 MB y el modo demo se quedaba
      * reconvirtiendo texturas sin parar.
      */
+    /* translucidos sin ordenar en el PowerVR (autosort desactivado): ya van
+     * en el orden del original y la Z crece con el orden; ordenar por pixel
+     * cuesta tiempo de dibujado en la consola real */
     pvr_init_params_t params = {
         { PVR_BINSIZE_16, PVR_BINSIZE_0, PVR_BINSIZE_16, PVR_BINSIZE_0, PVR_BINSIZE_16 },
-        VERTEX_BUF, 0, 0, 0, 4, 0
+        VERTEX_BUF, 0, 0, 1, 4, 0
     };
     pvr_init(&params);
     pvr_set_bg_color(0.0f, 0.0f, 0.0f);
@@ -852,6 +981,9 @@ int pvrr_init(void)
     if (!page_polys[0] || !page_polys[1])
         return -1;
     pool_init();
+#ifndef CUSA_NO_DIAG
+    diag_init();
+#endif
     printf("texturas: bloque de %u KB\n", (unsigned)(pool_bytes / 1024));
     vu_poly_hook = on_poly;
     vu_fifo_reset_hook = on_fifo_reset;
@@ -867,6 +999,9 @@ void pvrr_reserve_shot(void)
 
 void pvrr_frame(int shot)
 {
+#ifndef CUSA_NO_DIAG
+    diag_update();
+#endif
     static int still, seen_polys;
     int shown = vu.page_control & 1;
     pending_shot |= shot;
@@ -889,6 +1024,9 @@ void pvrr_frame(int shot)
         return;
     }
     stat_pages++;
+#ifndef CUSA_NO_DIAG
+    diag_pages++;
+#endif
     page_npolys[shown] = 0;
     if (shot && shot_tex)
         dump_shot();
@@ -919,6 +1057,10 @@ void pvrr_stats(unsigned *conv, unsigned *polys)
 #endif
     if (stat_vfull)
         printf("  render: bufer de vertices lleno %u veces\n", stat_vfull);
+#endif
+#ifdef CUSA_POLYDBG
+    printf("  polydbg: max %d, >2048 %u, >8192 %u\n", dbg_maxc, dbg_big, dbg_huge);
+    dbg_maxc = 0; dbg_big = dbg_huge = 0;
 #endif
     stat_ta_timeouts = stat_vfull = 0;
     t_rwait = 0;
