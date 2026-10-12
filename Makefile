@@ -63,10 +63,14 @@ run: $(TARGET)
 # Imagen de CD con los datos generados por tools/romtool.py (no se versiona).
 # El nombre lleva el commit (cruisn-usa-dc-<commit>.cdi) para distinguir versiones.
 MKDCDISC ?= mkdcdisc
-CDI_OUT ?= cruisn-usa-dc-$(CUSA_VERSION).cdi
+# Variante (pasos2, diag...): va en el nombre del fichero y en el titulo del
+# disco, que es lo que enseña el menu de GDemu
+CDI_VARIANT ?=
+CDI_OUT ?= cruisn-usa-dc-$(CUSA_VERSION)$(if $(CDI_VARIANT),-$(CDI_VARIANT)).cdi
+CDI_TITLE ?= CRUISN USA $(CUSA_VERSION)$(if $(CDI_VARIANT), $(shell echo $(CDI_VARIANT) | tr a-z A-Z))
 GENERATED ?= generated
 cdi: $(TARGET)
-	$(MKDCDISC) -e $(TARGET) -o $(CDI_OUT) --allow-overwrite -n "CRUISN USA DC" \
+	$(MKDCDISC) -e $(TARGET) -o $(CDI_OUT) --allow-overwrite -n "$(CDI_TITLE)" \
 		-f $(GENERATED)/program.bin -f $(GENERATED)/gfx.bin \
 		$(if $(wildcard $(GENERATED)/cmos.bin),-f $(GENERATED)/cmos.bin) \
 		$(if $(wildcard $(GENERATED)/sound.bin),-f $(GENERATED)/sound.bin) \
