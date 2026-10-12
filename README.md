@@ -46,12 +46,15 @@ python3 tools/c31recomp.py generated/program.bin generated/recomp --coverage gen
 # 6. Sonido (opcional, necesita MAME): graba la placa DCS y crea generated/sound.bin
 tools/make_sound.sh ~/ruta/a/roms/de/mame
 
-# 7. Compilar para Dreamcast e imagen de CD
+# 7. Pantalla de carga (opcional): logo y "NOW LOADING" sacados de la ROM
+make -f Makefile.host recomp && tools/make_loading.py
+
+# 8. Compilar para Dreamcast e imagen de CD
 source $KOS_BASE/environ.sh
 make && make cdi
 ```
 
-`make cdi` crea `cruisn-usa-dc-<commit>.cdi` y mete en el CD `program.bin`, `gfx.bin`, `cmos.bin` y, si existe, `sound.bin` (el banco de sonido, ver [docs/SONIDO.md](docs/SONIDO.md)).
+`make cdi` crea `cruisn-usa-dc-<commit>.cdi` y mete en el CD `program.bin`, `gfx.bin`, `cmos.bin` y, si existen, `sound.bin` (el banco de sonido, ver [docs/SONIDO.md](docs/SONIDO.md)) y `loading.bin` (pantalla de carga). Con `KOS_CFLAGS="$KOS_CFLAGS -DCUSA_DIAG"` se compila la version de prueba con la linea de diagnostico abajo a la izquierda y los pasos del arranque en pantalla.
 
 ## Controles (mando de Dreamcast)
 

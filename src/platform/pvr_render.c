@@ -178,7 +178,7 @@ static unsigned conv_this_frame, stat_tiny;
 #ifdef CUSA_OPBDBG
 static int dbg_opb_max;
 #endif
-#ifndef CUSA_NO_DIAG
+#ifdef CUSA_DIAG
 static unsigned diag_conv;
 #endif
 #ifdef CUSA_POLYDBG
@@ -200,7 +200,7 @@ static unsigned dbg_new, dbg_blk, dbg_pal, dbg_evict, dbg_ktex;
  * texturas pendientes, se convierten todas de una vez (un frame lento) en
  * vez de acabar mostrando la escena sin marcador ni coches. */
 #define HOLD_UNLIMIT 8
-static int conv_unlimited, vram_full;
+static int conv_unlimited, vram_full, frame_is_menu;
 #define CONV_LIMIT() (vram_full || (!conv_unlimited && \
     (conv_this_frame >= MAX_CONV_PER_FRAME || texels_this_frame >= MAX_TEXELS_PER_FRAME)))
 static uint32_t texels_this_frame;
@@ -339,7 +339,7 @@ static int convert(tex_entry *t, const tex_req *r, uint32_t pixdata)
 #ifdef CUSA_TEXDBG
     dbg_ktex += n / 1024;
 #endif
-#ifndef CUSA_NO_DIAG
+#ifdef CUSA_DIAG
     diag_conv++;
 #endif
     stat_conv++;
@@ -394,6 +394,7 @@ static tex_entry *get_texture_slow(const packet *d)
     uint32_t umin = 255, umax = 0, vmin = 255, vmax = 0, slot, k, g, pg;
     uint64_t key;
     tex_entry *t;
+    int flat2d;
 
     for (k = 0; k < 4; k++) {
         uint32_t u = d->uv[k] & 0xFF, v = d->uv[k] >> 8;
@@ -417,6 +418,11 @@ static tex_entry *get_texture_slow(const packet *d)
     if (r.u0 + r.w > 256) r.u0 = 256 - r.w;
     if (r.v0 + r.h > 256) r.v0 = 256 - r.h;
     key = tex_key(&r);
+    /* en pantallas con pocos poligonos (menus) los rectangulos rectos son
+     * imagenes 2D: esas se guardan a resolucion completa (a media se veian
+     * borrosas); en carrera, el cielo y los fondos siguen a media */
+    flat2d = (d->x[0] == d->x[3] && d->x[1] == d->x[2] && d->y[0] == d->y[1] && d->y[2] == d->y[3]) ||
+             (d->x[0] == d->x[1] && d->x[2] == d->x[3] && d->y[0] == d->y[3] && d->y[1] == d->y[2]);
 
     g = 0;
     for (k = (r.base + r.v0) >> 4; k <= ((r.base + r.v0 + r.h - 1) >> 4); k++)
@@ -433,7 +439,7 @@ static tex_entry *get_texture_slow(const packet *d)
             t->key = key;
             t->w = (uint16_t)r.w;
             t->h = (uint16_t)r.h;
-            if (r.w * r.h >= TEX_HALF_TEXELS) {
+            if (r.w * r.h >= TEX_HALF_TEXELS && !(flat2d && frame_is_menu)) {
                 t->w >>= 1;
                 t->h >>= 1;
                 t->half = 1;
@@ -451,6 +457,7 @@ static tex_entry *get_texture_slow(const packet *d)
         stat_why[0]++;
         return NULL;
     }
+
     if (t->blk_sum != g || t->pal_gen != pg || !t->ptr) {
 #ifdef CUSA_TEXDBG
         if (!t->ptr) dbg_new++; else if (t->blk_sum != g) dbg_blk++; else dbg_pal++;
@@ -531,6 +538,16 @@ static void on_poly(const uint32_t *d, int page)
             stat_tiny++;
             return;
         }
+#ifdef CUSA_POLYDUMP
+        {
+            extern int cusa_frame;
+            if (cusa_frame >= CUSA_POLYDUMP && cusa_frame < CUSA_POLYDUMP + 3)
+                printf("POLY c0=%04X c1=%04X tb=%04X xy=%d,%d %d,%d %d,%d %d,%d uv=%04X %04X %04X %04X\n",
+                       (unsigned)(d[0] & 0xFFFF), (unsigned)(d[1] & 0xFFFF), (unsigned)(d[14] & 0xFFFF),
+                       x0, y0, x1, y1, x2, y2, x3, y3, (unsigned)(d[10] & 0xFFFF), (unsigned)(d[11] & 0xFFFF),
+                       (unsigned)(d[12] & 0xFFFF), (unsigned)(d[13] & 0xFFFF));
+        }
+#endif
         if (page_npolys[page] >= MAX_POLYS)
             return;
         o = &page_polys[page][page_npolys[page]++];
@@ -622,20 +639,68 @@ static void submit_list(pvr_list_t list, const draw_item *it, int n)
             uo = (0.5f - (float)t->u0) * iw;
             vo = (0.5f - (float)t->v0) * ih;
         }
+        /*
+         * El V-Unit pinta los pixeles de los bordes enteros (y el poligono
+         * posterior pisa la fila o columna compartida); el PowerVR corta en
+         * el centro del pixel del vertice. Se agranda el poligono medio pixel
+         * hacia fuera, prolongando las UV con su gradiente: sin esto, entre
+         * dos poligonos asomaba media fila del borde de la textura de arriba
+         * (linea negra en el mapa de "elegir carrera").
+         */
+        {
+            float gx[4], gy[4], gu[4], gv[4], cx, cy, det, dudx = 0, dudy = 0, dvdx = 0, dvdy = 0;
+            for (k = 0; k < 4; k++) {
+                gx[k] = (float)d->x[k];
+                gy[k] = (float)d->y[k];
+                gu[k] = (float)(d->uv[k] & 0xFF);
+                gv[k] = (float)(d->uv[k] >> 8);
+            }
+            cx = (gx[0] + gx[1] + gx[2] + gx[3]) * 0.25f;
+            cy = (gy[0] + gy[1] + gy[2] + gy[3]) * 0.25f;
+            det = (gx[1] - gx[0]) * (gy[2] - gy[0]) - (gx[2] - gx[0]) * (gy[1] - gy[0]);
+            if (t && (det > 0.5f || det < -0.5f)) {
+                float id = 1.0f / det;
+                dudx = ((gu[1] - gu[0]) * (gy[2] - gy[0]) - (gu[2] - gu[0]) * (gy[1] - gy[0])) * id;
+                dudy = ((gu[2] - gu[0]) * (gx[1] - gx[0]) - (gu[1] - gu[0]) * (gx[2] - gx[0])) * id;
+                dvdx = ((gv[1] - gv[0]) * (gy[2] - gy[0]) - (gv[2] - gv[0]) * (gy[1] - gy[0])) * id;
+                dvdy = ((gv[2] - gv[0]) * (gx[1] - gx[0]) - (gv[1] - gv[0]) * (gx[2] - gx[0])) * id;
+            }
+            float umn = gu[0], umx = gu[0], vmn = gv[0], vmx = gv[0];
+            for (k = 1; k < 4; k++) {
+                if (gu[k] < umn) umn = gu[k];
+                if (gu[k] > umx) umx = gu[k];
+                if (gv[k] < vmn) vmn = gv[k];
+                if (gv[k] > vmx) vmx = gv[k];
+            }
+            for (k = 0; k < 4; k++) {
+                float ex = gx[k] > cx ? 0.5f : gx[k] < cx ? -0.5f : 0.0f;
+                float ey = gy[k] > cy ? 0.5f : gy[k] < cy ? -0.5f : 0.0f;
+                gx[k] += 0.5f + ex;
+                gy[k] += 0.5f + ey;
+                gu[k] += dudx * ex + dudy * ey;
+                gv[k] += dvdx * ex + dvdy * ey;
+                /* sin salirse de los texeles que usa el poligono: fuera puede
+                 * haber otra textura y se veian rayas en las juntas */
+                if (gu[k] < umn) gu[k] = umn;
+                if (gu[k] > umx) gu[k] = umx;
+                if (gv[k] < vmn) gv[k] = vmn;
+                if (gv[k] > vmx) gv[k] = vmx;
+            }
         for (k = 0; k < 4; k++) {
             int vi = order[k];
             pvr_vertex_t *v = pvr_dr_target();
             v->flags = k == 3 ? PVR_CMD_VERTEX_EOL : PVR_CMD_VERTEX;
-            v->x = ((float)d->x[vi] + 0.5f) * SX;
-            v->y = ((float)d->y[vi] + 0.5f) * SY;
+            v->x = gx[vi] * SX;
+            v->y = gy[vi] * SY;
             v->z = z;
-            v->u = (float)(d->uv[vi] & 0xFF) * iw + uo;
-            v->v = (float)(d->uv[vi] >> 8) * ih + vo;
+            v->u = gu[vi] * iw + uo;
+            v->v = gv[vi] * ih + vo;
             v->argb = argb;
             if (list == PVR_LIST_TR_POLY && d->pad && !(d->c0 & 0x2000))
                 v->argb = (argb & 0x00FFFFFFu) | ((uint32_t)(64 - d->pad) * 4 << 24);
             v->oargb = 0;
             pvr_dr_commit(v);
+        }
         }
         vbytes += 4 * 32;
         stat_polys++;
@@ -666,6 +731,7 @@ static int upload_cpu_framebuffer(int page)
                 uint16_t c = vu.coloram[src[(y + k) * 512 + x] & 0x7FFF];
                 conv_buf[k * 512 + x] = (uint16_t)(((c & 0x7FE0) << 1) | (c & 0x1F));
             }
+#ifdef CUSA_DIAG
         if (y == 256) {
             /* estado en vivo sobre la pantalla de arranque (diagnostico en
              * consola real: si los numeros avanzan, el juego no esta parado) */
@@ -676,6 +742,7 @@ static int upload_cpu_framebuffer(int page)
             memset(conv_buf + (352 - 256) * 512, 0, 24 * 512 * 2);
             tf_draw((uint16_t *)conv_buf + (352 - 256) * 512 + 8, 512, line, 0xFFFF, 0x0000);
         }
+#endif
         vram_guard();
         pvr_txr_load(conv_buf, (uint8_t *)cpu_fb_tex + y * 1024, rows * 1024);
     }
@@ -720,7 +787,7 @@ static int hold_frames, cpu_fb_ready;
  *   T esperas del TA agotadas (total)  V KB maximos del bufer de vertices
  *   R ms del ultimo dibujado  E errores del PowerVR (ISP sin memoria, strip,
  *   OPB sin memoria, entrada TA, desbordamiento TA, parametros sin memoria) */
-#ifndef CUSA_NO_DIAG
+#ifdef CUSA_DIAG
 #define DIAG_W 512
 #define DIAG_H 32
 static pvr_ptr_t diag_tex;
@@ -827,6 +894,7 @@ static int render_page(int page, int shot)
     texels_this_frame = 0;
     vram_full = 0;
     conv_unlimited = hold_frames >= HOLD_UNLIMIT;
+    frame_is_menu = n < 600;
     {
         /* textura de cada poligono y numero de orden por textura */
         uint16_t nseq[3] = { 1, 1, 1 };
@@ -931,7 +999,7 @@ static int render_page(int page, int shot)
      * mostrar trozos; como mucho unos 30 frames seguidos. */
     if (skipped_now && hold_frames < 30) {
         hold_frames++;
-#ifndef CUSA_NO_DIAG
+#ifdef CUSA_DIAG
         diag_holds++;
 #endif
         return 0;
@@ -1084,7 +1152,7 @@ int pvrr_init(void)
     if (!page_polys[0] || !page_polys[1])
         return -1;
     pool_init();
-#ifndef CUSA_NO_DIAG
+#ifdef CUSA_DIAG
     diag_init();
 #endif
     printf("texturas: bloque de %u KB\n", (unsigned)(pool_bytes / 1024));
@@ -1100,14 +1168,116 @@ void pvrr_reserve_shot(void)
         shot_tex = pool_alloc(640 * 480 * 2);
 }
 
+/* ---- pantalla de carga ----
+ * Desde el arranque hasta el primer frame con poligonos, en vez de las
+ * pantallas de texto del arcade (DOWNLOADING TEXTURES...) se muestra el logo
+ * y "NOW LOADING" (generated/loading.bin, sacado de la ROM). */
+static const uint16_t *loading_img;
+static pvr_ptr_t loading_logo, loading_text;
+static int loading_shown;
+
+void pvrr_set_loading(const uint16_t *img)
+{
+    loading_img = img;
+}
+
+static void loading_quad(pvr_ptr_t tex, int tw, int th, float x0, float y0, float x1, float y1, float vmax)
+{
+    pvr_poly_cxt_t cxt;
+    pvr_poly_hdr_t hdr;
+    pvr_vertex_t v;
+    int k;
+    const float xs[4] = { x0, x1, x0, x1 }, ys[4] = { y0, y0, y1, y1 };
+    const float us[4] = { 0, 1, 0, 1 }, vs[4] = { 0, 0, vmax, vmax };
+    pvr_poly_cxt_txr(&cxt, PVR_LIST_PT_POLY, PVR_TXRFMT_ARGB1555 | PVR_TXRFMT_NONTWIDDLED,
+                     tw, th, tex, PVR_FILTER_NONE);
+    cxt.gen.culling = PVR_CULLING_NONE;
+    pvr_poly_compile(&hdr, &cxt);
+    pvr_prim(&hdr, sizeof(hdr));
+    for (k = 0; k < 4; k++) {
+        v.flags = k == 3 ? PVR_CMD_VERTEX_EOL : PVR_CMD_VERTEX;
+        v.x = xs[k];
+        v.y = ys[k];
+        v.z = 1.0f;
+        v.u = us[k];
+        v.v = vs[k];
+        v.argb = 0xFFFFFFFFu;
+        v.oargb = 0;
+        pvr_prim(&v, sizeof(v));
+    }
+}
+
+/* 1 si se ha dibujado (o ya estaba) la pantalla de carga */
+static int draw_loading(void)
+{
+    if (!loading_img)
+        return 0;
+    if (loading_shown && !(pending_shot && shot_tex))
+        return 1;
+    if (!loading_logo) {
+        loading_logo = pool_alloc(256 * 256 * 2);
+        loading_text = pool_alloc(512 * 64 * 2);
+        if (!loading_logo || !loading_text)
+            return 0;
+        pvr_wait_ready();
+        pvr_txr_load(loading_img, loading_logo, 256 * 256 * 2);
+        pvr_txr_load(loading_img + 256 * 256, loading_text, 512 * 64 * 2);
+    }
+    pvr_wait_ready();
+    if (pending_shot && shot_tex)
+        pvr_scene_begin_rtt(shot_tex, 640, 480, 640);
+    else
+        pvr_scene_begin();
+    pvr_list_begin(PVR_LIST_OP_POLY);
+    pvr_list_finish();
+    pvr_list_begin(PVR_LIST_PT_POLY);
+    /* logo 254x192 del arcade a la escala del port (1,25 x 1,2), centrado */
+    loading_quad(loading_logo, 256, 256, 160.0f, 70.0f, 480.0f, 300.4f, 192.0f / 256.0f);
+    loading_quad(loading_text, 512, 64, 64.0f, 340.0f, 576.0f, 404.0f, 1.0f);
+    pvr_list_finish();
+    pvr_list_begin(PVR_LIST_TR_POLY);
+    pvr_list_finish();
+    pvr_scene_finish();
+    if (pending_shot && shot_tex) {
+        pending_shot = 0;
+        dump_shot();
+        loading_shown = 0;                  /* volver a dibujarla en pantalla */
+        return 1;
+    }
+    loading_shown = 1;
+    return 1;
+}
+
+static void loading_done(void)
+{
+    if (loading_logo) {
+        pvr_wait_ready();
+        pvr_wait_render_done();
+        pool_free(loading_logo, 256 * 256 * 2);
+        pool_free(loading_text, 512 * 64 * 2);
+        loading_logo = loading_text = NULL;
+    }
+    free((void *)loading_img);
+    loading_img = NULL;
+}
+
 void pvrr_frame(int shot)
 {
-#ifndef CUSA_NO_DIAG
+#ifdef CUSA_DIAG
     diag_update();
 #endif
     static int still, seen_polys;
     int shown = vu.page_control & 1;
     pending_shot |= shot;
+    if (!seen_polys && loading_img) {
+        if (page_npolys[0] || page_npolys[1]) {
+            seen_polys = 1;
+            loading_done();
+        } else if (draw_loading()) {
+            last_shown = shown;
+            return;
+        }
+    }
     if (shown == last_shown) {
         /* Arranque: el juego escribe textos en la memoria de video sin
          * poligonos ni cambio de pagina; se muestran cada medio segundo hasta
@@ -1127,7 +1297,7 @@ void pvrr_frame(int shot)
         return;
     }
     stat_pages++;
-#ifndef CUSA_NO_DIAG
+#ifdef CUSA_DIAG
     diag_pages++;
 #endif
     page_npolys[shown] = 0;

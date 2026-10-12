@@ -121,6 +121,48 @@ static void stats_hook(const uint32_t *d, int page)
     (void)page;
 }
 
+/* CUSA_POLYLOG=frame: lista los paquetes de ese frame (y los dibuja) */
+static int polylog_frame = -1;
+static void polylog_hook(const uint32_t *d, int page)
+{
+    (void)page;
+    if (frame == polylog_frame)
+        printf("PK c0=%04X c1=%04X tb=%04X xy=%d,%d %d,%d %d,%d %d,%d uv=%04X %04X %04X %04X\n",
+               (unsigned)(d[0] & 0xFFFF), (unsigned)(d[1] & 0xFFFF), (unsigned)(d[14] & 0xFFFF),
+               (int16_t)d[2], (int16_t)d[3], (int16_t)d[4], (int16_t)d[5], (int16_t)d[6], (int16_t)d[7],
+               (int16_t)d[8], (int16_t)d[9], (unsigned)(d[10] & 0xFFFF), (unsigned)(d[11] & 0xFFFF),
+               (unsigned)(d[12] & 0xFFFF), (unsigned)(d[13] & 0xFFFF));
+    vu_poly_hook = NULL;
+    vu_poly_packet(d);
+    vu_poly_hook = polylog_hook;
+}
+
+/* CUSA_TEXDUMP=frame,base,paleta,filas,fichero: guarda una zona de la
+ * WAVERAM como PPM de 256 de ancho (texel 0 en magenta = transparente) */
+static void texdump(void)
+{
+    const char *e = getenv("CUSA_TEXDUMP");
+    unsigned fr, base, pal, rows, x, y;
+    char path[512];
+    FILE *f;
+    if (!e || sscanf(e, "%u,%x,%x,%u,%511s", &fr, &base, &pal, &rows, path) != 5 || (int)fr != frame)
+        return;
+    f = fopen(path, "wb");
+    if (!f)
+        return;
+    fprintf(f, "P6\n256 %u\n255\n", rows);
+    for (y = 0; y < rows; y++)
+        for (x = 0; x < 256; x++) {
+            uint8_t i = vu.texram[(base * 256 + y * 256 + x) & (sizeof(vu.texram) - 1)];
+            uint16_t c = vu.coloram[(pal << 8) | i];
+            unsigned char p[3];
+            if (i == 0) { p[0] = 255; p[1] = 0; p[2] = 255; }
+            else { p[0] = ((c >> 10) & 31) << 3; p[1] = ((c >> 5) & 31) << 3; p[2] = (c & 31) << 3; }
+            fwrite(p, 1, 3, f);
+        }
+    fclose(f);
+}
+
 static uint64_t get_cycles(void) { return rt_cycles(); }
 static uint32_t get_pc(void) { return 0; }
 static void raise_irq(int bit)
@@ -302,6 +344,7 @@ void rt_platform_event(void)
             polys_acc = 0;
         }
     }
+    texdump();
     if (every > 0 && frame % every == 0) {
         printf("frame %d: sp=%06X polis=%u pagina=%u  (%.1f s)\n", frame,
                (unsigned)C.r[C3X_SP], (unsigned)vu.polys_frame,
@@ -403,6 +446,10 @@ int main(int argc, char **argv)
 
     if (getenv("CUSA_POLYSTATS") || getenv("CUSA_TILESIM"))
         vu_poly_hook = stats_hook;
+    if (getenv("CUSA_POLYLOG")) {
+        polylog_frame = atoi(getenv("CUSA_POLYLOG"));
+        vu_poly_hook = polylog_hook;
+    }
     /* CUSA_SOUNDLOG: registra los bytes; CUSA_SOUNDWAV=fichero.wav: mezcla lo
      * que sonaria en Dreamcast con generated/sound.bin */
     sound_log = getenv("CUSA_SOUNDLOG") != NULL;

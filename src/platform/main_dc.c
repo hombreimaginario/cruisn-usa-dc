@@ -526,6 +526,28 @@ void rt_platform_event(void)
 
 static uint64_t t_boot;
 
+/* La pantalla de carga en el framebuffer antes de que arranque el PowerVR:
+ * mismas posiciones que la version con texturas (pvr_render.c) */
+static void draw_loading_fb(const uint16_t *img)
+{
+    int x, y;
+    for (y = 0; y < 231; y++) {
+        uint16_t *o = (uint16_t *)vram_s + (70 + y) * 640 + 160;
+        int sy = y * 192 / 231;
+        for (x = 0; x < 320; x++) {
+            uint16_t c = img[sy * 256 + x * 256 / 320];
+            o[x] = (c & 0x8000) ? (uint16_t)(((c & 0x7FE0) << 1) | (c & 0x1F)) : 0;
+        }
+    }
+    for (y = 0; y < 64; y++) {
+        uint16_t *o = (uint16_t *)vram_s + (340 + y) * 640 + 64;
+        for (x = 0; x < 512; x++) {
+            uint16_t c = img[256 * 256 + y * 512 + x];
+            o[x] = (c & 0x8000) ? (uint16_t)(((c & 0x7FE0) << 1) | (c & 0x1F)) : 0;
+        }
+    }
+}
+
 /* Memoria libre del monticulo (el bloque mas grande que se puede reservar,
  * mas lo libre en bloques sueltos): las partidas en la VMU y los hilos la
  * necesitan. Una reserva fallida dejaba antes un puntero nulo. */
@@ -543,17 +565,20 @@ static int boot_line;
  * que el PowerVR tome la pantalla, en la consola se ve donde. */
 static void boot_step(const char *s)
 {
+#ifdef CUSA_DIAG
     char buf[64];
     snprintf(buf, sizeof(buf), "%-30s", s);
     tf_draw((uint16_t *)vram_s + (290 + boot_line * 26) * 640 + 120, 640, buf, 0xFFFF, 0x0000);
     if (boot_line < 5)
         boot_line++;
+#endif
     printf("arranque: %s (%u ms)\n", s, (unsigned)(timer_ms_gettime64() - t_boot));
 }
 
 static void boot_fail(const char *s)
 {
     boot_step(s);
+    tf_draw((uint16_t *)vram_s + 440 * 640 + 24, 640, s, 0xFFFF, 0x0000);
     for (;;)
         thd_sleep(1000);
 }
@@ -576,11 +601,21 @@ int main(int argc, char **argv)
     vid_set_mode(DM_640x480, PM_RGB565);
     vid_clear(0, 0, 0);
     tf_init();                          /* antes de cualquier lectura del CD */
-    /* Pantalla de carga: leer el programa, el sonido y arrancar el juego
-     * lleva unos segundos y en negro parece colgado. */
-    tf_draw((uint16_t *)vram_s + 220 * 640 + 236, 640, "CRUIS'N USA", 0xFFFF, 0x0000);
-    tf_draw((uint16_t *)vram_s + 250 * 640 + 248, 640, "Cargando...", 0xFFFF, 0x0000);
-#ifdef CUSA_VERSION
+    /* Pantalla de carga: el logo y NOW LOADING sacados de la ROM (ver
+     * tools/make_loading.py); sin ese fichero, un texto. */
+    {
+        size_t ln;
+        uint16_t *img = load_file("/cd/loading.bin", &ln);
+        if (img && ln == (256 * 256 + 512 * 64) * 2) {
+            draw_loading_fb(img);
+            pvrr_set_loading(img);
+        } else {
+            free(img);
+            tf_draw((uint16_t *)vram_s + 220 * 640 + 236, 640, "CRUIS'N USA", 0xFFFF, 0x0000);
+            tf_draw((uint16_t *)vram_s + 250 * 640 + 248, 640, "NOW LOADING", 0xFFFF, 0x0000);
+        }
+    }
+#if defined(CUSA_VERSION) && defined(CUSA_DIAG)
     tf_draw((uint16_t *)vram_s + 440 * 640 + 24, 640, "version " CUSA_VERSION, 0xFFFF, 0x0000);
 #endif
     t_boot = timer_ms_gettime64();

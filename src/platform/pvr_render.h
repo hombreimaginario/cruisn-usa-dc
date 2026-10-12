@@ -11,7 +11,10 @@
 
 /* 0 si todo bien; -1 sin memoria para las listas de poligonos */
 int pvrr_init(void);
-void pvrr_frame(int shot);      /* llamar en cada interrupcion de video */
+void pvrr_frame(int shot);
+/* Imagen de la pantalla de carga (logo 256x256 + texto 512x64, ARGB1555):
+ * se muestra hasta el primer frame con poligonos y despues se libera */
+void pvrr_set_loading(const uint16_t *img);      /* llamar en cada interrupcion de video */
 /* Depuracion: reservar ya la textura de las capturas (CUSA_SHOT) */
 void pvrr_reserve_shot(void);
 void pvrr_stats(unsigned *converted, unsigned *polys);
