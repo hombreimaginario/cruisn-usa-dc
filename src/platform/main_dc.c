@@ -436,7 +436,9 @@ static uint64_t next_vbl_us;
  * juego iba al 55-90 % de velocidad en carretera; con 3 va casi siempre a
  * tiempo real (en la carrera de prueba, 22-28 imagenes por segundo).
  */
+#ifndef NFRAMES_MAX
 #define NFRAMES_MAX 3
+#endif
 #ifndef VBL_DEBT
 #define VBL_DEBT 2
 #endif

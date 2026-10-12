@@ -175,6 +175,9 @@ static pvr_ptr_t cpu_fb_tex, shot_tex;
 static unsigned stat_conv, stat_polys, stat_skipped, stat_pages, stat_why[4], stat_ta_timeouts;
 static uint64_t t_tex, t_wait, t_sub;
 static unsigned conv_this_frame, stat_tiny;
+#ifdef CUSA_OPBDBG
+static int dbg_opb_max;
+#endif
 #ifndef CUSA_NO_DIAG
 static unsigned diag_conv;
 #endif
@@ -885,6 +888,37 @@ static int render_page(int page, int shot)
         }
         for (l = 0; l < 3; l++)
             used[l] = nseq[l];
+#ifdef CUSA_OPBDBG
+        {
+            /* bloques de OPB que hacen falta: cada poligono es una tira con
+             * un puntero en cada tile de 32x32 que toca (caja envolvente) */
+            static uint16_t cnt[3][300];
+            int li, k2, need = 0;
+            memset(cnt, 0, sizeof(cnt));
+            for (li = 0; li < 3; li++) {
+                for (k2 = 0; k2 < (li == 0 ? seq_count[0][0] : 0) + 0; k2++) ;
+            }
+            for (i = 0; i < m; i++) {
+                const packet *d = unsorted[i].d;
+                int x0 = 9999, x1 = -9999, y0 = 9999, y1 = -9999, tx, ty, kk;
+                li = (d->c0 & 0x2000) || POLY_FADED(d) ? 2 : (unsorted[i].t ? unsorted[i].t->pt : 0);
+                for (kk = 0; kk < 4; kk++) {
+                    int xx = (int)((d->x[kk] + 0.5f) * SX), yy = (int)((d->y[kk] + 0.5f) * SY);
+                    if (xx < x0) x0 = xx; if (xx > x1) x1 = xx;
+                    if (yy < y0) y0 = yy; if (yy > y1) y1 = yy;
+                }
+                if (x0 < 0) x0 = 0; if (y0 < 0) y0 = 0; if (x1 > 639) x1 = 639; if (y1 > 479) y1 = 479;
+                for (ty = y0 / 32; ty <= y1 / 32; ty++)
+                    for (tx = x0 / 32; tx <= x1 / 32; tx++)
+                        cnt[li][ty * 20 + tx]++;
+            }
+            for (li = 0; li < 3; li++)
+                for (k2 = 0; k2 < 300; k2++)
+                    if (cnt[li][k2] > 15)
+                        need += (cnt[li][k2] - 1) / 15;
+            if (need > dbg_opb_max) dbg_opb_max = need;
+        }
+#endif
         n_op = total[0];
         n_pt = total[1];
         n_tr = total[2];
@@ -1034,8 +1068,12 @@ int pvrr_init(void)
     /* translucidos sin ordenar en el PowerVR (autosort desactivado): ya van
      * en el orden del original y la Z crece con el orden; ordenar por pixel
      * cuesta tiempo de dibujado en la consola real */
+    /* Bloques de punteros por tile de 32 palabras (antes 16): en la consola
+     * real el PowerVR daba miles de errores "OPB sin memoria" (y perdia
+     * poligonos en esos tiles) en carrera; Flycast no tiene ese limite.
+     * Cuesta ~580 KB de VRAM de texturas. */
     pvr_init_params_t params = {
-        { PVR_BINSIZE_16, PVR_BINSIZE_0, PVR_BINSIZE_16, PVR_BINSIZE_0, PVR_BINSIZE_16 },
+        { PVR_BINSIZE_32, PVR_BINSIZE_0, PVR_BINSIZE_32, PVR_BINSIZE_0, PVR_BINSIZE_32 },
         VERTEX_BUF, 0, 0, 1, 4, 0
     };
     pvr_init(&params);
@@ -1121,6 +1159,10 @@ void pvrr_stats(unsigned *conv, unsigned *polys)
     dbg_new = dbg_blk = dbg_pal = dbg_evict = dbg_ktex = 0;
 #endif
     printf("  render: diminutos descartados %u\n", stat_tiny);
+#ifdef CUSA_OPBDBG
+    printf("  opb: bloques extra necesarios (max) %d de %d\n", dbg_opb_max, 4 * 3 * 300);
+    dbg_opb_max = 0;
+#endif
     stat_tiny = 0;
     if (stat_vfull)
         printf("  render: bufer de vertices lleno %u veces\n", stat_vfull);
