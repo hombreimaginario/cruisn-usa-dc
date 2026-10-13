@@ -789,7 +789,7 @@ static int hold_frames, cpu_fb_ready;
  *   OPB sin memoria, entrada TA, desbordamiento TA, parametros sin memoria) */
 #ifdef CUSA_DIAG
 #define DIAG_W 512
-#define DIAG_H 32
+#define DIAG_H 64
 static pvr_ptr_t diag_tex;
 static uint16_t diag_buf[DIAG_W * DIAG_H] __attribute__((aligned(32)));
 static int diag_dirty;
@@ -818,7 +818,7 @@ static void diag_update(void)
 {
     uint64_t now = timer_ms_gettime64();
     pvr_stats_t st;
-    char line[64];
+    char line[43], line2[43];                /* 42 caracteres caben en 512 px */
     if (now - diag_t < 1000)
         return;
     diag_t = now;
@@ -829,6 +829,9 @@ static void diag_update(void)
              (unsigned)(st.vtx_buffer_used_max / 1024), (unsigned)(st.rnd_last_time / 1000000),
              (unsigned long)pvr_errs[0], (unsigned long)pvr_errs[1], (unsigned long)pvr_errs[2],
              (unsigned long)pvr_errs[3], (unsigned long)pvr_errs[4], (unsigned long)pvr_errs[5]);
+    /* segunda linea: lecturas de la ROM grafica / errores de CD, frames y fase */
+    snprintf(line2, sizeof(line2), "D%lu/%lu F%lu %s", (unsigned long)wd_counters[WD_CD_GFX],
+             (unsigned long)wd_counters[WD_CD_ERR], (unsigned long)wd_heartbeat, (const char *)wd_phase);
     diag_pages = diag_holds = diag_conv = 0;
     memset(diag_buf, 0, sizeof(diag_buf));
     {
@@ -837,6 +840,7 @@ static void diag_update(void)
             diag_buf[i] = 0x8000;           /* negro opaco */
     }
     tf_draw(diag_buf + 4 * DIAG_W + 4, DIAG_W, line, 0xFFFF, 0x8000);
+    tf_draw(diag_buf + 34 * DIAG_W + 4, DIAG_W, line2, 0xFFFF, 0x8000);
     diag_dirty = 1;
 }
 
@@ -1136,13 +1140,14 @@ int pvrr_init(void)
     /* translucidos sin ordenar en el PowerVR (autosort desactivado): ya van
      * en el orden del original y la Z crece con el orden; ordenar por pixel
      * cuesta tiempo de dibujado en la consola real */
-    /* Bloques de punteros por tile de 32 palabras (antes 16): en la consola
-     * real el PowerVR daba miles de errores "OPB sin memoria" (y perdia
-     * poligonos en esos tiles) en carrera; Flycast no tiene ese limite.
-     * Cuesta ~580 KB de VRAM de texturas. */
+    /* Desbordamiento de los bloques de punteros por tile: 10 juegos extra
+     * (antes 4). En consola real el PowerVR daba miles de errores "OPB sin
+     * memoria" en carrera; Flycast no tiene ese limite. Se probo con bloques
+     * de 32 palabras y la consola se quedaba en la pantalla de carga, asi
+     * que se vuelve a 16 (con los que si arrancaba) con mas desbordamiento. */
     pvr_init_params_t params = {
-        { PVR_BINSIZE_32, PVR_BINSIZE_0, PVR_BINSIZE_32, PVR_BINSIZE_0, PVR_BINSIZE_32 },
-        VERTEX_BUF, 0, 0, 1, 4, 0
+        { PVR_BINSIZE_16, PVR_BINSIZE_0, PVR_BINSIZE_16, PVR_BINSIZE_0, PVR_BINSIZE_16 },
+        VERTEX_BUF, 0, 0, 1, 10, 0
     };
     pvr_init(&params);
     pvr_set_bg_color(0.0f, 0.0f, 0.0f);
@@ -1208,11 +1213,48 @@ static void loading_quad(pvr_ptr_t tex, int tw, int th, float x0, float y0, floa
 }
 
 /* 1 si se ha dibujado (o ya estaba) la pantalla de carga */
+static void loading_bar(float frac)
+{
+    pvr_poly_cxt_t cxt;
+    pvr_poly_hdr_t hdr;
+    pvr_vertex_t v;
+    int q, k;
+    pvr_poly_cxt_col(&cxt, PVR_LIST_OP_POLY);
+    cxt.gen.culling = PVR_CULLING_NONE;
+    pvr_poly_compile(&hdr, &cxt);
+    pvr_prim(&hdr, sizeof(hdr));
+    for (q = 0; q < 2; q++) {
+        float x0 = 220.0f, x1 = q ? 220.0f + 200.0f * frac : 420.0f;
+        float y0 = 418.0f, y1 = 424.0f;
+        const float xs[4] = { x0, x1, x0, x1 }, ys[4] = { y0, y0, y1, y1 };
+        for (k = 0; k < 4; k++) {
+            v.flags = k == 3 ? PVR_CMD_VERTEX_EOL : PVR_CMD_VERTEX;
+            v.x = xs[k];
+            v.y = ys[k];
+            v.z = q ? 1.2f : 1.1f;
+            v.u = v.v = 0;
+            v.argb = q ? 0xFF6890D8u : 0xFF202838u;     /* azul de la tipografia */
+            v.oargb = 0;
+            pvr_prim(&v, sizeof(v));
+        }
+    }
+}
+
+static void loading_done(void);
+
 static int draw_loading(void)
 {
+    static uint32_t frames;
     if (!loading_img)
         return 0;
-    if (loading_shown && !(pending_shot && shot_tex))
+    /* si en 15 s no aparece ningun poligono, se vuelven a ver las pantallas
+     * de texto del arcade (por si el juego esta parado en un aviso) */
+    if (++frames > 57 * 15) {
+        loading_done();
+        return 0;
+    }
+    /* se redibuja cada cuarto de segundo con la barra de progreso */
+    if (loading_shown && frames % 15 && !(pending_shot && shot_tex))
         return 1;
     if (!loading_logo) {
         loading_logo = pool_alloc(256 * 256 * 2);
@@ -1228,7 +1270,19 @@ static int draw_loading(void)
         pvr_scene_begin_rtt(shot_tex, 640, 480, 640);
     else
         pvr_scene_begin();
+#ifdef CUSA_DIAG
+    diag_update();
+    diag_upload();
+#endif
     pvr_list_begin(PVR_LIST_OP_POLY);
+    {
+        /* la ROM grafica que lee el arranque: unas 56 paginas de 32 KB */
+        float f = (float)wd_counters[WD_CD_GFX] / 56.0f;
+        loading_bar(f > 1.0f ? 1.0f : f);
+    }
+#ifdef CUSA_DIAG
+    diag_draw();
+#endif
     pvr_list_finish();
     pvr_list_begin(PVR_LIST_PT_POLY);
     /* logo 254x192 del arcade a la escala del port (1,25 x 1,2), centrado */
@@ -1250,6 +1304,7 @@ static int draw_loading(void)
 
 static void loading_done(void)
 {
+    printf("pantalla de carga: fin, %lu lecturas de la ROM grafica\n", (unsigned long)wd_counters[WD_CD_GFX]);
     if (loading_logo) {
         pvr_wait_ready();
         pvr_wait_render_done();

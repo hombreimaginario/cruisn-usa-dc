@@ -639,7 +639,16 @@ int main(int argc, char **argv)
 
     boot_step("leyendo CMOS / VMU");
     cmos = load_file("/cd/cmos.bin", &n);
-    cmos_init(cmos, cmos ? n : 0);
+    {
+        /* B pulsado al encender: arrancar sin la partida de la VMU (por si
+         * una guardada por otra version no deja arrancar) */
+        int ignore = 0;
+        maple_device_t *c = maple_enum_type(0, MAPLE_FUNC_CONTROLLER);
+        cont_state_t *st = c ? (cont_state_t *)maple_dev_status(c) : NULL;
+        if (st && (st->buttons & CONT_B))
+            ignore = 1;
+        cmos_init(cmos, cmos ? n : 0, ignore);
+    }
     free(cmos);
 
 #ifdef CUSA_RECOMP

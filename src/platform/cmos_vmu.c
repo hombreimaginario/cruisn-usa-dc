@@ -126,12 +126,14 @@ static int read_vmu(void)
     return ok;
 }
 
-int cmos_init(const uint32_t *cd_cmos, size_t cd_size)
+int cmos_init(const uint32_t *cd_cmos, size_t cd_size, int ignore_vmu)
 {
     int from_vmu = 0;
 
-    if (find_vmu())
+    if (find_vmu() && !ignore_vmu)
         from_vmu = read_vmu();
+    if (ignore_vmu)
+        printf("cmos: se ignora la VMU (B pulsado)\n");
     if (from_vmu)
         printf("cmos: cargada de %s\n", vmu_path);
     else if (cd_cmos && cd_size == CMOS_BYTES) {
