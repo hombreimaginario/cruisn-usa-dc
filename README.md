@@ -54,7 +54,7 @@ source $KOS_BASE/environ.sh
 make && make cdi
 ```
 
-`make cdi` crea `cruisn-usa-dc-<commit>.cdi` y mete en el CD `program.bin`, `gfx.bin`, `cmos.bin` y, si existen, `sound.bin` (el banco de sonido, ver [docs/SONIDO.md](docs/SONIDO.md)) y `loading.bin` (pantalla de carga). Con `KOS_CFLAGS="$KOS_CFLAGS -DCUSA_DIAG"` se compila la version de prueba con la linea de diagnostico abajo a la izquierda y los pasos del arranque en pantalla.
+`make cdi` crea `cruisn-usa-dc-<fecha>.cdi` (y `CDI_VARIANT=diag` añade `-diag`; el título del disco lleva lo mismo) y mete en el CD `program.bin`, `gfx.bin`, `cmos.bin` y, si existen, `sound.bin` (el banco de sonido, ver [docs/SONIDO.md](docs/SONIDO.md)) y `loading.bin` (pantalla de carga). Con `KOS_CFLAGS="$KOS_CFLAGS -DCUSA_DIAG"` se compila la version de prueba con la linea de diagnostico abajo a la izquierda y los pasos del arranque en pantalla.
 
 ## Controles (mando de Dreamcast)
 
