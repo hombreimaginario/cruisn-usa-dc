@@ -708,7 +708,11 @@ static void submit_list(pvr_list_t list, const draw_item *it, int n)
          */
         int seq[4], nv = 0;
         {
+#ifdef CUSA_NO_THINCULL
+            int ka = 1, kb = 1;
+#else
             int ka = !thin_tri(d, 0, 1, 3), kb = !thin_tri(d, 1, 3, 2);
+#endif
             if (ka && kb) {
                 seq[0] = 0; seq[1] = 1; seq[2] = 3; seq[3] = 2; nv = 4;
             } else if (ka) {

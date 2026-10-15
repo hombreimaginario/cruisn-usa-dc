@@ -130,7 +130,7 @@ static int polylog_frame = -1;
 static void polylog_hook(const uint32_t *d, int page)
 {
     (void)page;
-    if (frame == polylog_frame)
+    if (frame >= polylog_frame && frame < polylog_frame + 4)
         printf("PK c0=%04X c1=%04X tb=%04X xy=%d,%d %d,%d %d,%d %d,%d uv=%04X %04X %04X %04X\n",
                (unsigned)(d[0] & 0xFFFF), (unsigned)(d[1] & 0xFFFF), (unsigned)(d[14] & 0xFFFF),
                (int16_t)d[2], (int16_t)d[3], (int16_t)d[4], (int16_t)d[5], (int16_t)d[6], (int16_t)d[7],

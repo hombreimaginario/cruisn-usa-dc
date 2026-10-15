@@ -303,8 +303,20 @@ static unsigned dv_idle_wait, dv_idle_late, dv_event, dv_forced, dv_idle_calls;
 #endif
 
 /* Lo que pasa en cada interrupcion de video (INT0, 57 por segundo) */
+#ifdef CUSA_NFDBG
+static unsigned nf_hist[8], nf_last_in;
+#endif
 static void vblank(void)
 {
+#ifdef CUSA_NFDBG
+    {
+        /* CUSA.ASM: NFRAMES (C92F) se fija cuando el juego pone INFRAMES (C930) a 0 */
+        uint32_t nf = vu.fastram[0xC92F], in = vu.fastram[0xC930];
+        if (in < nf_last_in)
+            nf_hist[nf < 7 ? nf : 7]++;
+        nf_last_in = in;
+    }
+#endif
     cusa_frame = ++frame;
     hle_fade_frame = frame;
     wd_heartbeat++;
@@ -356,6 +368,11 @@ static void vblank(void)
 #ifdef CUSA_VBLDBG
         printf("  vbl: espera %u, tarde %u, durante juego %u, forzadas %u\n", dv_idle_wait, dv_idle_late, dv_event, dv_forced);
         dv_idle_wait = dv_idle_late = dv_event = dv_forced = dv_idle_calls = 0;
+#endif
+#ifdef CUSA_NFDBG
+        printf("  NFRAMES: 0:%u 1:%u 2:%u 3:%u 4:%u 5:%u 6:%u 7+:%u  FRAMRATE %u\n", nf_hist[0], nf_hist[1], nf_hist[2],
+               nf_hist[3], nf_hist[4], nf_hist[5], nf_hist[6], nf_hist[7], (unsigned)vu.fastram[0xC931]);
+        memset(nf_hist, 0, sizeof(nf_hist));
 #endif
         printf("  modelos: %u, descartados por distancia %u, fundidos %u\n", (unsigned)hle_lod_calls,
                (unsigned)hle_lod_culled, (unsigned)hle_fade_started);
@@ -447,6 +464,13 @@ static uint64_t next_vbl_us;
 #endif
 static int vbl_since_flip, last_flip_page = -1;
 
+/* INFRAMES del juego (CUSA.ASM: .bss en la FASTRAM, @C930 con DP = 0):
+ * interrupciones de video desde que empezo el frame actual */
+static inline uint32_t game_inframes(void)
+{
+    return vu.fastram[0xC930];
+}
+
 static void vblank_due(uint64_t now)
 {
     /* Si el juego va atrasado se recuperan hasta VBL_DEBT interrupciones
@@ -506,18 +530,23 @@ void rt_platform_event(void)
         next_vbl_us = now + VBL_US;
     if (now < next_vbl_us)
         return;
-    /* con el juego ocupado, la ultima interrupcion permitida se guarda hasta
-     * que espere (salvo que lleve mucho sin esperar: bucles no detectados) */
-    if (vbl_since_flip >= NFRAMES_MAX - 1 && now < next_vbl_us + 4 * VBL_US)
+    /* Con el juego ocupado, la ultima interrupcion permitida se guarda hasta
+     * que espere (salvo que lleve mucho sin esperar: bucles no detectados).
+     * Se cuenta con el contador del propio juego (INFRAMES, que pasa a
+     * NFRAMES al empezar cada frame): antes se contaba por cambios de pagina
+     * y con los retrasos y recuperaciones el juego llegaba a ver 4 o 5
+     * interrupciones por frame; con mas de 3 deja de detectar los choques
+     * con coches, animales y objetos (COLSCC). */
+    if (game_inframes() >= NFRAMES_MAX - 1 && now < next_vbl_us + 4 * VBL_US)
         return;
     /* La segunda interrupcion del frame se puede retrasar un poco si el
      * juego esta a punto de terminar: asi un frame de 36 ms no espera a la
      * tercera (52 ms, 19 imagenes por segundo). El calendario no cambia, asi
      * que el juego sigue a su velocidad. */
-    if (vbl_since_flip == 0 && now < next_vbl_us + VBL_HOLD_US)
+    if (game_inframes() == 1 && now < next_vbl_us + VBL_HOLD_US)
         return;
 #ifdef CUSA_VBLDBG
-    if (vbl_since_flip >= NFRAMES_MAX - 1) dv_forced++; else dv_event++;
+    if (game_inframes() >= NFRAMES_MAX - 1) dv_forced++; else dv_event++;
 #endif
     vblank_due(now);
 }
