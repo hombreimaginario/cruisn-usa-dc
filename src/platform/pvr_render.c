@@ -174,7 +174,7 @@ static pvr_ptr_t cpu_fb_tex, shot_tex;
 
 static unsigned stat_conv, stat_polys, stat_skipped, stat_pages, stat_why[4], stat_ta_timeouts;
 static uint64_t t_tex, t_wait, t_sub;
-static unsigned conv_this_frame, stat_tiny;
+static unsigned conv_this_frame, stat_tiny, stat_thin;
 #ifdef CUSA_OPBDBG
 static int dbg_opb_max;
 #endif
@@ -585,6 +585,19 @@ static uint16_t seq_count[3][MAX_POLYS + 1];
 static uint32_t vbytes;                /* bytes enviados al TA este frame */
 static unsigned stat_vfull;
 
+/* alto del triangulo (pixeles del arcade) respecto a su lado mas largo */
+static int thin_tri(const packet *d, int a, int b, int c)
+{
+    float ax = d->x[a], ay = d->y[a], bx = d->x[b], by = d->y[b], cx = d->x[c], cy = d->y[c];
+    float cr = (bx - ax) * (cy - ay) - (cx - ax) * (by - ay);
+    float l1 = (bx - ax) * (bx - ax) + (by - ay) * (by - ay);
+    float l2 = (cx - bx) * (cx - bx) + (cy - by) * (cy - by);
+    float l3 = (ax - cx) * (ax - cx) + (ay - cy) * (ay - cy);
+    float lm = l1 > l2 ? (l1 > l3 ? l1 : l3) : (l2 > l3 ? l2 : l3);
+    /* alto = |cr| / lado; alto < 0,5  <=>  cr^2 < 0,25 * lado^2 */
+    return cr * cr < 0.25f * lm;
+}
+
 static void submit_list(pvr_list_t list, const draw_item *it, int n)
 {
     int i, k;
@@ -592,7 +605,6 @@ static void submit_list(pvr_list_t list, const draw_item *it, int n)
     uint32_t cur_col = 0xFFFFFFFFu;
     pvr_poly_cxt_t cxt;
     pvr_poly_hdr_t hdr;
-    static const int order[4] = { 0, 1, 3, 2 };
 
     for (i = 0; i < n; i++, it++) {
         const packet *d = it->d;
@@ -686,10 +698,31 @@ static void submit_list(pvr_list_t list, const draw_item *it, int n)
                 if (gv[k] < vmn) gv[k] = vmn;
                 if (gv[k] > vmx) gv[k] = vmx;
             }
-        for (k = 0; k < 4; k++) {
-            int vi = order[k];
+        /*
+         * Triangulos casi planos (menos de medio pixel de alto respecto a su
+         * lado mas largo): no se ven, pero el PowerVR de la consola pinta con
+         * ellos rayas horizontales mas largas que el poligono (los coches
+         * lejanos salian con una raya de su color). Flycast no lo hace. Se
+         * descartan; si solo lo es uno de los dos triangulos de la tira, se
+         * envia el otro solo.
+         */
+        int seq[4], nv = 0;
+        {
+            int ka = !thin_tri(d, 0, 1, 3), kb = !thin_tri(d, 1, 3, 2);
+            if (ka && kb) {
+                seq[0] = 0; seq[1] = 1; seq[2] = 3; seq[3] = 2; nv = 4;
+            } else if (ka) {
+                seq[0] = 0; seq[1] = 1; seq[2] = 3; nv = 3;
+            } else if (kb) {
+                seq[0] = 1; seq[1] = 3; seq[2] = 2; nv = 3;
+            }
+            if (nv < 4)
+                stat_thin++;
+        }
+        for (k = 0; k < nv; k++) {
+            int vi = seq[k];
             pvr_vertex_t *v = pvr_dr_target();
-            v->flags = k == 3 ? PVR_CMD_VERTEX_EOL : PVR_CMD_VERTEX;
+            v->flags = k == nv - 1 ? PVR_CMD_VERTEX_EOL : PVR_CMD_VERTEX;
             v->x = gx[vi] * SX;
             v->y = gy[vi] * SY;
             v->z = z;
@@ -1383,7 +1416,8 @@ void pvrr_stats(unsigned *conv, unsigned *polys)
     }
     dbg_new = dbg_blk = dbg_pal = dbg_evict = dbg_ktex = 0;
 #endif
-    printf("  render: diminutos descartados %u\n", stat_tiny);
+    printf("  render: diminutos descartados %u, triangulos planos %u\n", stat_tiny, stat_thin);
+    stat_thin = 0;
 #ifdef CUSA_OPBDBG
     printf("  opb: bloques extra necesarios (max) %d de %d\n", dbg_opb_max, 4 * 3 * 300);
     dbg_opb_max = 0;

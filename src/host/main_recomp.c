@@ -19,6 +19,10 @@
 static const char *gdir, *outdir;
 static int frames, every, frame;
 static uint64_t frame_end = INSNS_PER_FRAME;
+/* CUSA_CPUPCT: ciclos del C31 por interrupcion de video en % (menos = CPU
+ * mas lenta: cada frame del juego abarca mas interrupciones, como en una
+ * consola que no llega) */
+static uint64_t insns_per_frame = INSNS_PER_FRAME;
 static clock_t t_start;
 
 /* CUSA_SOUNDLOG: decodifica el protocolo del puerto de sonido (bytes con
@@ -307,7 +311,7 @@ void rt_platform_event(void)
     frame++;
     if (sound_wav)
         sound_preview_frame();
-    frame_end += INSNS_PER_FRAME;
+    frame_end += insns_per_frame;
     {
         static int last_page = -1, flips, polys_acc;
         int pg = vu.page_control & 1;
@@ -444,6 +448,8 @@ int main(int argc, char **argv)
         memcpy(vu.cmos, cm, n);
     free(cm);
 
+    if (getenv("CUSA_CPUPCT"))
+        insns_per_frame = (uint64_t)INSNS_PER_FRAME * atoi(getenv("CUSA_CPUPCT")) / 100;
     if (getenv("CUSA_POLYSTATS") || getenv("CUSA_TILESIM"))
         vu_poly_hook = stats_hook;
     if (getenv("CUSA_POLYLOG")) {
