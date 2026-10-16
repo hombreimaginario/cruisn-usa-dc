@@ -652,53 +652,6 @@ static void submit_list(pvr_list_t list, const draw_item *it, int n)
             vo = (0.5f - (float)t->v0) * ih;
         }
         /*
-         * El V-Unit pinta los pixeles de los bordes enteros (y el poligono
-         * posterior pisa la fila o columna compartida); el PowerVR corta en
-         * el centro del pixel del vertice. Se agranda el poligono medio pixel
-         * hacia fuera, prolongando las UV con su gradiente: sin esto, entre
-         * dos poligonos asomaba media fila del borde de la textura de arriba
-         * (linea negra en el mapa de "elegir carrera").
-         */
-        {
-            float gx[4], gy[4], gu[4], gv[4], cx, cy, det, dudx = 0, dudy = 0, dvdx = 0, dvdy = 0;
-            for (k = 0; k < 4; k++) {
-                gx[k] = (float)d->x[k];
-                gy[k] = (float)d->y[k];
-                gu[k] = (float)(d->uv[k] & 0xFF);
-                gv[k] = (float)(d->uv[k] >> 8);
-            }
-            cx = (gx[0] + gx[1] + gx[2] + gx[3]) * 0.25f;
-            cy = (gy[0] + gy[1] + gy[2] + gy[3]) * 0.25f;
-            det = (gx[1] - gx[0]) * (gy[2] - gy[0]) - (gx[2] - gx[0]) * (gy[1] - gy[0]);
-            if (t && (det > 0.5f || det < -0.5f)) {
-                float id = 1.0f / det;
-                dudx = ((gu[1] - gu[0]) * (gy[2] - gy[0]) - (gu[2] - gu[0]) * (gy[1] - gy[0])) * id;
-                dudy = ((gu[2] - gu[0]) * (gx[1] - gx[0]) - (gu[1] - gu[0]) * (gx[2] - gx[0])) * id;
-                dvdx = ((gv[1] - gv[0]) * (gy[2] - gy[0]) - (gv[2] - gv[0]) * (gy[1] - gy[0])) * id;
-                dvdy = ((gv[2] - gv[0]) * (gx[1] - gx[0]) - (gv[1] - gv[0]) * (gx[2] - gx[0])) * id;
-            }
-            float umn = gu[0], umx = gu[0], vmn = gv[0], vmx = gv[0];
-            for (k = 1; k < 4; k++) {
-                if (gu[k] < umn) umn = gu[k];
-                if (gu[k] > umx) umx = gu[k];
-                if (gv[k] < vmn) vmn = gv[k];
-                if (gv[k] > vmx) vmx = gv[k];
-            }
-            for (k = 0; k < 4; k++) {
-                float ex = gx[k] > cx ? 0.5f : gx[k] < cx ? -0.5f : 0.0f;
-                float ey = gy[k] > cy ? 0.5f : gy[k] < cy ? -0.5f : 0.0f;
-                gx[k] += 0.5f + ex;
-                gy[k] += 0.5f + ey;
-                gu[k] += dudx * ex + dudy * ey;
-                gv[k] += dvdx * ex + dvdy * ey;
-                /* sin salirse de los texeles que usa el poligono: fuera puede
-                 * haber otra textura y se veian rayas en las juntas */
-                if (gu[k] < umn) gu[k] = umn;
-                if (gu[k] > umx) gu[k] = umx;
-                if (gv[k] < vmn) gv[k] = vmn;
-                if (gv[k] > vmx) gv[k] = vmx;
-            }
-        /*
          * Triangulos casi planos (menos de medio pixel de alto respecto a su
          * lado mas largo): no se ven, pero el PowerVR de la consola pinta con
          * ellos rayas horizontales mas largas que el poligono (los coches
@@ -726,15 +679,34 @@ static void submit_list(pvr_list_t list, const draw_item *it, int n)
             if (nv < 4)
                 stat_thin++;
         }
+        /*
+         * El V-Unit pinta los pixeles de los bordes enteros (y el poligono
+         * posterior pisa la fila o columna compartida); el PowerVR corta en
+         * el centro del pixel del vertice. Cada vertice se aleja medio pixel
+         * del centro del poligono (con las mismas UV): sin esto, entre dos
+         * poligonos asomaba media fila del borde de la textura de arriba
+         * (linea negra en el mapa de "elegir carrera"). Comparaciones enteras
+         * con la suma de las coordenadas (4 veces el centro).
+         */
+        {
+        int sx4 = d->x[0] + d->x[1] + d->x[2] + d->x[3];
+        int sy4 = d->y[0] + d->y[1] + d->y[2] + d->y[3];
         for (k = 0; k < nv; k++) {
             int vi = seq[k];
+            int x4 = d->x[vi] * 4, y4 = d->y[vi] * 4;
+#ifdef CUSA_NO_EXPAND
+            float ex = 0.5f, ey = 0.5f;
+#else
+            float ex = x4 > sx4 ? 1.0f : x4 < sx4 ? 0.0f : 0.5f;
+            float ey = y4 > sy4 ? 1.0f : y4 < sy4 ? 0.0f : 0.5f;
+#endif
             pvr_vertex_t *v = pvr_dr_target();
             v->flags = k == nv - 1 ? PVR_CMD_VERTEX_EOL : PVR_CMD_VERTEX;
-            v->x = gx[vi] * SX;
-            v->y = gy[vi] * SY;
+            v->x = ((float)d->x[vi] + ex) * SX;
+            v->y = ((float)d->y[vi] + ey) * SY;
             v->z = z;
-            v->u = gu[vi] * iw + uo;
-            v->v = gv[vi] * ih + vo;
+            v->u = (float)(d->uv[vi] & 0xFF) * iw + uo;
+            v->v = (float)(d->uv[vi] >> 8) * ih + vo;
             v->argb = argb;
             if (list == PVR_LIST_TR_POLY && d->pad && !(d->c0 & 0x2000))
                 v->argb = (argb & 0x00FFFFFFu) | ((uint32_t)(64 - d->pad) * 4 << 24);
@@ -938,7 +910,7 @@ static int render_page(int page, int shot)
     texels_this_frame = 0;
     vram_full = 0;
     conv_unlimited = hold_frames >= HOLD_UNLIMIT;
-    frame_is_menu = n < 600;
+    frame_is_menu = n < 1200;
     {
         /* textura de cada poligono y numero de orden por textura */
         uint16_t nseq[3] = { 1, 1, 1 };
