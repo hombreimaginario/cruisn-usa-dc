@@ -353,56 +353,6 @@ static void fade_object(uint32_t obj, float z)
         vu_poly_fade = age * 63 / FADE_LEN;
 }
 
-/* ------------------------------------------------------------------------ */
-/* Copia nativa de los vertices proyectados                                  */
-/* ------------------------------------------------------------------------ */
-
-/*
- * Los bucles de vertices escriben X, Y de pantalla y Z en formato C3x y las
- * rutinas de envio de poligonos los vuelven a leer y convertir (a flotante
- * para descartar caras traseras y a entero para el paquete), dos o tres
- * veces por vertice. Se guarda tambien una copia ya convertida del ultimo
- * bloque de vertices; el envio la usa si el bloque sigue intacto en memoria
- * (se comprueban la primera y la ultima palabra: otro codigo del juego puede
- * haber escrito alli despues).
- */
-#define VS_MAX 1024
-static struct {
-    uint32_t base, n, w0, wl;
-} vs;
-static float vs_x[VS_MAX], vs_y[VS_MAX];
-static uint32_t vs_ix[VS_MAX], vs_iy[VS_MAX];
-
-static inline int vs_ok(uint32_t ir0, uint32_t ir1)
-{
-    ir0 &= 0xFFFFFFu;
-    return vs.n && ir1 == ir0 + 1 && ir0 == vs.base && ir0 + vs.n * 3 <= VU_FASTRAM_WORDS &&
-           vu.fastram[ir0] == vs.w0 && vu.fastram[ir0 + vs.n * 3 - 1] == vs.wl;
-}
-
-/* dst: final del bloque escrito (NULL si no estaba en la FASTRAM) */
-static inline void vs_set(const uint32_t *dst, uint32_t iters)
-{
-    if (!dst || iters > VS_MAX || !iters) {
-        vs.n = 0;
-        return;
-    }
-    vs.base = (uint32_t)(dst - iters * 3 - vu.fastram);
-    vs.n = iters;
-    vs.w0 = dst[-(int32_t)iters * 3];
-    vs.wl = dst[-1];
-}
-
-#define VLOAD(ar, xf, yf, xi, yi) do {                                         \
-        uint32_t k_ = (ar) / 3;                                                \
-        if (vsok && k_ < vs.n && (ar) == k_ * 3) {                             \
-            xf = vs_x[k_]; yf = vs_y[k_]; xi = vs_ix[k_]; yi = vs_iy[k_];      \
-        } else {                                                               \
-            uint32_t a_ = MW((ar) + ir0), b_ = MW((ar) + ir1);                 \
-            xf = c2f(a_); yf = c2f(b_); xi = fixc(a_); yi = fixc(b_);          \
-        }                                                                      \
-    } while (0)
-
 static void vtx_project(uint32_t rs, uint32_t re, uint32_t tz_addr, const float *org, int imm_shift)
 {
     uint32_t *r = C.r;
@@ -461,10 +411,6 @@ static void vtx_project(uint32_t rs, uint32_t re, uint32_t tz_addr, const float 
                 dst[0] = float_to_c3x(sx);
                 dst[1] = float_to_c3x(R0);
                 dst[2] = float_to_c3x(Z);
-                if (k < VS_MAX) {
-                    vs_x[k] = sx; vs_y[k] = R0;
-                    vs_ix[k] = fixc(dst[0]); vs_iy[k] = fixc(dst[1]);
-                }
                 dst += 3;
             } else {
                 WR(ar3, float_to_c3x(sx));
@@ -479,7 +425,6 @@ static void vtx_project(uint32_t rs, uint32_t re, uint32_t tz_addr, const float 
     SF(ar4 - 1, tx);
     SF(ar4, ty);
     SF(ar4 + 1, tzv);
-    vs_set(dst, iters);
 
     setf(0, R0); setf(1, R1); setf(2, R2); setf(3, R3);
     r[AR1] = ar1 + 2 * iters; r[AR3] = ar3; r[AR5] = ar5; r[IR1] = ir1;
@@ -559,17 +504,12 @@ void hle_vtx_race(void)
         R1 = X;
         R0 = inv_z * X + R6;                                /* 01B5-01B6 */
         {
-            float sxf = R0;
             uint32_t sx = float_to_c3x(R0);
             R0 = (inv_z * R7) * 1.0400390625f + y0;         /* 01B7-01B9 */
             if (dst) {
                 dst[0] = sx;
                 dst[1] = float_to_c3x(R0);
                 dst[2] = float_to_c3x(Z);
-                if (k < VS_MAX) {
-                    vs_x[k] = sxf; vs_y[k] = R0;
-                    vs_ix[k] = fixc(sx); vs_iy[k] = fixc(dst[1]);
-                }
                 dst += 3;
             } else {
                 WR(ar3, sx);
@@ -580,7 +520,6 @@ void hle_vtx_race(void)
         ar3 += 3;
         ir1 = (uint32_t)iz;
     }
-    vs_set(dst, iters);
     setf(0, R0); setf(1, R1); setf(2, R2); setf(3, R3); setf(7, R7);
     r[AR1] = ar1 + 2 * iters; r[AR3] = ar3; r[IR1] = ir1;
     r[RC_] = 0xFFFFFFFFu;
@@ -682,7 +621,6 @@ uint32_t hle_poly_emit(void)
     float f0 = 0, f1 = 0, f2 = 0, x2, y2, x4, y4, x5, y5;
     uint32_t i0 = 0, i1 = 0, i2 = 0;
     uint32_t rc = r[RC_];
-    int vsok = vs_ok(ir0, ir1);
     uint64_t work = 0;
     int entered_skip = 0;
 
@@ -706,10 +644,10 @@ uint32_t hle_poly_emit(void)
         r3 >>= 8;
         ar2 = (r3 & r7) * 3;
         /* 052A-052C: espera de FIFO (nunca llena en la emulacion) */
-        VLOAD(ar4, x4, y4, wx4, wy4);
+        wx4 = MW(ar4 + ir0); x4 = c2f(wx4); wy4 = MW(ar4 + ir1); y4 = c2f(wy4);
 
-        VLOAD(ar5, x5, y5, wx5, wy5);
-        VLOAD(ar2, x2, y2, wx2, wy2);
+        wx5 = MW(ar5 + ir0); x5 = c2f(wx5); wy5 = MW(ar5 + ir1); y5 = c2f(wy5);
+        wx2 = MW(ar2 + ir0); x2 = c2f(wx2); wy2 = MW(ar2 + ir1); y2 = c2f(wy2);
         f1 = x5 - x4;                                       /* 052D */
         f2 = y5 - y4;                                       /* 052E */
         f0 = x5 - x2;                                       /* 052F */
@@ -754,20 +692,14 @@ uint32_t hle_poly_emit(void)
             pkt[0] = rdm(ar1);
             ar1 += 2;
             pkt[1] = r6;                                    /* 053C ... || STI R6 */
-            pkt[2] = wx4;
-            pkt[3] = wy4;
-            pkt[4] = wx5;
-            pkt[5] = wy5;
-            pkt[6] = wx2;
-            pkt[7] = wy2;
-            {
-                float fx3, fy3;
-                uint32_t ix3, iy3;
-                VLOAD(ar3, fx3, fy3, ix3, iy3);
-                (void)fx3; (void)fy3;
-                pkt[8] = ix3;
-                pkt[9] = iy3;
-            }
+            pkt[2] = fixc(wx4);
+            pkt[3] = fixc(wy4);
+            pkt[4] = fixc(wx5);
+            pkt[5] = fixc(wy5);
+            pkt[6] = fixc(wx2);
+            pkt[7] = fixc(wy2);
+            pkt[8] = fixc(MW(ar3 + ir0));
+            pkt[9] = fixc(MW(ar3 + ir1));
             i0 = rdm(ar1); i1 = rdm(ar1 + 1); i2 = rdm(ar1 + 2);
             ar1 += 3;
             pkt[10] = i0;
@@ -810,7 +742,6 @@ uint32_t hle_poly_emit_pal(void)
     float f0 = 0, f1 = 0, f2 = 0, x2, y2, x4, y4, x5, y5;
     uint32_t i1 = 0, i2 = 0;
     uint32_t rc = r[RC_];
-    int vsok = vs_ok(ir0, ir1);
     uint32_t work = 0;
     int entered_skip = 0;
 
@@ -829,9 +760,9 @@ uint32_t hle_poly_emit_pal(void)
         ar5 = (r3 & r7) * 3;
         r3 >>= 8;
         ar2 = (r3 & r7) * 3;                                /* 0469 */
-        VLOAD(ar4, x4, y4, wx4, wy4);
-        VLOAD(ar5, x5, y5, wx5, wy5);
-        VLOAD(ar2, x2, y2, wx2, wy2);
+        wx4 = MW(ar4 + ir0); x4 = c2f(wx4); wy4 = MW(ar4 + ir1); y4 = c2f(wy4);
+        wx5 = MW(ar5 + ir0); x5 = c2f(wx5); wy5 = MW(ar5 + ir1); y5 = c2f(wy5);
+        wx2 = MW(ar2 + ir0); x2 = c2f(wx2); wy2 = MW(ar2 + ir1); y2 = c2f(wy2);
         f1 = x5 - x4;                                       /* 046D */
         f2 = y5 - y4;                                       /* 046E */
         f0 = x5 - x2;                                       /* 046F */
@@ -875,20 +806,14 @@ uint32_t hle_poly_emit_pal(void)
             ar6 = rt_shift(w0, r6, 0, 0) + bk;              /* 0478, 047A */
             pkt[0] = w0;
             pkt[1] = rt_shift(rdm(ar6), r6, 0, 0) << 8;      /* 047B-047C */
-            pkt[2] = wx4;
-            pkt[3] = wy4;
-            pkt[4] = wx5;
-            pkt[5] = wy5;
-            pkt[6] = wx2;
-            pkt[7] = wy2;
-            {
-                float fx3, fy3;
-                uint32_t ix3, iy3;
-                VLOAD(ar3, fx3, fy3, ix3, iy3);
-                (void)fx3; (void)fy3;
-                pkt[8] = ix3;
-                pkt[9] = iy3;
-            }
+            pkt[2] = fixc(wx4);
+            pkt[3] = fixc(wy4);
+            pkt[4] = fixc(wx5);
+            pkt[5] = fixc(wy5);
+            pkt[6] = fixc(wx2);
+            pkt[7] = fixc(wy2);
+            pkt[8] = fixc(MW(ar3 + ir0));
+            pkt[9] = fixc(MW(ar3 + ir1));
             i0 = rdm(ar1); i1 = rdm(ar1 + 1); i2 = rdm(ar1 + 2);
             ar1 += 3;
             pkt[10] = i0;
@@ -931,7 +856,6 @@ uint32_t hle_poly_emit_quad(void)
     float f0 = 0, f1 = 0, f2 = 0, f3 = 0, x2, y2, y3, x4, y4, x5, y5;
     uint32_t i1 = 0, i2 = 0;
     uint32_t rc = r[RC_];
-    int vsok = vs_ok(ir0, ir1);
     uint32_t work = 0;
     int entered_skip = 0, r3_float = 0;
 
@@ -953,14 +877,10 @@ uint32_t hle_poly_emit_quad(void)
         ar2 = (r3 & r7) * 3;
         r3 >>= 8;
         ar3 = (r3 & r7) * 3;                                /* 056C */
-        VLOAD(ar4, x4, y4, wx4, wy4);
-        VLOAD(ar5, x5, y5, wx5, wy5);
-        VLOAD(ar2, x2, y2, wx2, wy2);
-        {
-            float fx3;
-            VLOAD(ar3, fx3, y3, wx3, wy3);
-            (void)fx3;
-        }
+        wx4 = MW(ar4 + ir0); x4 = c2f(wx4); wy4 = MW(ar4 + ir1); y4 = c2f(wy4);
+        wx5 = MW(ar5 + ir0); x5 = c2f(wx5); wy5 = MW(ar5 + ir1); y5 = c2f(wy5);
+        wx2 = MW(ar2 + ir0); x2 = c2f(wx2); wy2 = MW(ar2 + ir1); y2 = c2f(wy2);
+        wy3 = MW(ar3 + ir1); y3 = c2f(wy3);
         f1 = x5 - x4;                                       /* 0570 */
         f3 = y5 - y4;                                       /* 0571 */
         f0 = x2 - x5;                                       /* 0572 */
@@ -1009,17 +929,18 @@ uint32_t hle_poly_emit_quad(void)
         }
         {
             uint32_t pkt[15], i0;
+            wx3 = MW(ar3 + ir0);
             pkt[0] = rdm(ar1);                               /* 057F */
             ar1 += 2;
             pkt[1] = r6;                                    /* 0583 ... || STI R6 */
-            pkt[2] = wx4;
-            pkt[3] = wy4;
-            pkt[4] = wx5;
-            pkt[5] = wy5;
-            pkt[6] = wx2;
-            pkt[7] = wy2;
-            pkt[8] = wx3;
-            pkt[9] = wy3;
+            pkt[2] = fixc(wx4);
+            pkt[3] = fixc(wy4);
+            pkt[4] = fixc(wx5);
+            pkt[5] = fixc(wy5);
+            pkt[6] = fixc(wx2);
+            pkt[7] = fixc(wy2);
+            pkt[8] = fixc(wx3);
+            pkt[9] = fixc(wy3);
             i0 = rdm(ar1); i1 = rdm(ar1 + 1); i2 = rdm(ar1 + 2);
             ar1 += 3;
             pkt[10] = i0;
