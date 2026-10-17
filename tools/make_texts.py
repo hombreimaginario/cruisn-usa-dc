@@ -14,13 +14,16 @@ import os, struct, sys, tempfile
 
 GEN = sys.argv[1] if len(sys.argv) > 1 else "generated"
 
-TEXTS = ["PRESS X FOR HIDDEN CARS", "PRESS X FOR DEFAULT CARS",
-         "PRESS X FOR HIDDEN TRACKS", "PRESS X FOR DEFAULT TRACKS"]
+TEXTS = ["PRESS X FOR HIDDEN CARS!", "PRESS X FOR DEFAULT CARS!",
+         "PRESS X FOR HIDDEN TRACKS!", "PRESS X FOR DEFAULT TRACKS!"]
 ROW_H = 24
 TEX_H = 128
 
 FONT1 = 0x122A8        # _font1 en program.bin (palabras)
 GLYPH_W, GLYPH_H, ADV = 7, 7, 8
+# la fuente empieza en '(': el signo de exclamacion va dibujado aqui, 3 de ancho
+EXTRA = {'!': (0b0110000, 0b0110000, 0b0110000, 0b0110000, 0b0000000, 0b0110000, 0b0110000)}
+EXTRA_ADV = {'!': 4}
 
 
 def argb1555(p):
@@ -36,16 +39,16 @@ def main():
     img = [[None] * 512 for _ in range(TEX_H)]
     widths = []
     for r, text in enumerate(TEXTS):
-        widths.append(len(text) * ADV - 1)
+        widths.append(sum(EXTRA_ADV.get(ch, ADV) for ch in text) - 1)
         x0 = 0
         for ch in text:
             if ch != ' ':
-                g = words[FONT1 + (ord(ch) - 0x28) * GLYPH_H:FONT1 + (ord(ch) - 0x28 + 1) * GLYPH_H]
+                g = EXTRA[ch] if ch in EXTRA else words[FONT1 + (ord(ch) - 0x28) * GLYPH_H:FONT1 + (ord(ch) - 0x28 + 1) * GLYPH_H]
                 for y, row in enumerate(g):
                     for x in range(GLYPH_W):
                         if row >> (6 - x) & 1:
                             img[r * ROW_H + y][x0 + x] = (255, 255, 255)
-            x0 += ADV
+            x0 += EXTRA_ADV.get(ch, ADV)
     out = bytearray(struct.pack("<4I", *widths))
     for y in range(TEX_H):
         for x in range(512):
