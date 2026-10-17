@@ -370,8 +370,9 @@ static void vblank(void)
         dv_idle_wait = dv_idle_late = dv_event = dv_forced = dv_idle_calls = 0;
 #endif
 #ifdef CUSA_NFDBG
-        printf("  NFRAMES: 0:%u 1:%u 2:%u 3:%u 4:%u 5:%u 6:%u 7+:%u  FRAMRATE %u\n", nf_hist[0], nf_hist[1], nf_hist[2],
-               nf_hist[3], nf_hist[4], nf_hist[5], nf_hist[6], nf_hist[7], (unsigned)vu.fastram[0xC931]);
+        printf("  NFRAMES: 0:%u 1:%u 2:%u 3:%u 4:%u 5:%u 6:%u 7+:%u  FRAMRATE %u ATTRWAVE %u MODE %X\n", nf_hist[0], nf_hist[1], nf_hist[2],
+               nf_hist[3], nf_hist[4], nf_hist[5], nf_hist[6], nf_hist[7], (unsigned)vu.fastram[0xC931],
+               (unsigned)vu.fastram[0xC8CF], (unsigned)vu.fastram[0xC8C5]);
         memset(nf_hist, 0, sizeof(nf_hist));
 #endif
         printf("  modelos: %u, descartados por distancia %u, fundidos %u\n", (unsigned)hle_lod_calls,
@@ -802,6 +803,10 @@ int main(int argc, char **argv)
     memset(gfx_tag, 0xFF, sizeof(gfx_tag));
 
     vu_gfx_fetch = gfx_file != FILEHND_INVALID ? gfx_fetch : NULL;
+#ifndef CUSA_FULL_ATTRACT
+    if (!vu_light_attract(program))
+        printf("aviso: no se encontro la tabla de tramos del modo demo\n");
+#endif
     vu_reset(program, NULL);
 
     boot_step("leyendo CMOS / VMU");

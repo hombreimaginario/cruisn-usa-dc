@@ -127,6 +127,24 @@ int vu_skip_memtests(void)
     return n;
 }
 
+/* Demo mas ligera (port): el modo demo alterna cuatro tramos de carrera
+ * (ATTR_WAVETAB, ATTRDRNE.ASM: secciones 0, 4, 8 y 10). En Dreamcast la 4
+ * y la 10 van siempre a 3 interrupciones por imagen sin tiempo libre; se
+ * sustituyen por la 0 y la 8, las mas ligeras. Datos de la ROM de programa,
+ * no codigo: no afecta a la traduccion. */
+int vu_light_attract(uint32_t *program)
+{
+    static const uint32_t old_tab[16] = { 0, 0, 0x13F, 4, 0x2D6, 8, 0x3A3, 10,
+                                          0, 0, 0x13F, 4, 0x2D6, 8, 0x3A3, 10 };
+    static const uint32_t new_tab[16] = { 0, 0, 0x2D6, 8, 0, 0, 0x2D6, 8,
+                                          0, 0, 0x2D6, 8, 0, 0, 0x2D6, 8 };
+    uint32_t *t = program + (0xC10361u - VU_PROGROM_BASE);
+    if (memcmp(t, old_tab, sizeof(old_tab)) != 0)
+        return 0;
+    memcpy(t, new_tab, sizeof(new_tab));
+    return 1;
+}
+
 /* ---- perifericos internos del C31 (temporizadores) ---- */
 
 static uint32_t timer_counter(int t)

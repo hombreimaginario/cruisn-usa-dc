@@ -99,6 +99,7 @@ extern uint32_t vu_gfx_last_base, vu_gfx_last_words;
 
 void vu_reset(const uint32_t *program, const uint32_t *gfx);
 int  vu_skip_memtests(void);
+int  vu_light_attract(uint32_t *program);
 void vu_tick(void);                       /* llamar cada ~1000 instrucciones */
 void vu_report_unmapped(void);
 
