@@ -1016,6 +1016,57 @@ uint32_t hle_obj_near(void)
 }
 
 /* ------------------------------------------------------------------------ */
+/* Recorrido de una lista de objetos alrededor de un punto (0x1F94-0x1FA3)  */
+/* ------------------------------------------------------------------------ */
+
+/*
+ * Bucle 0x1F94-0x1FA3: para cada objeto de la lista (AR2, enlazada por la
+ * palabra 32) comprueba si el punto (R3, R2) cae dentro de su radio (palabra
+ * 29) en el plano XZ. Si cae, sale a 0x1FA4 (el objeto se procesa y se sigue
+ * en 0x1F94); si se acaba la lista, sale a 0x1FAD (R0 = 0, carry a 0, RETSU).
+ * Es el recorrido que hace el juego cada imagen por todas las listas de
+ * objetos del escenario.
+ */
+uint32_t hle_obj_scan(void)
+{
+    uint32_t *r = C.r;
+    float R2 = getf(2), R3 = getf(3), R0, R1;
+    uint32_t ar2 = r[AR2], work = 0;
+
+    for (;;) {
+        R0 = R3 - MF(ar2 + 1);                              /* 1F94 */
+        R1 = R2 - MF(ar2 + 3);                              /* 1F95 */
+        R1 = R1 * R1;
+        R0 = R0 * R0;                                       /* 1F97 */
+        R0 = R0 + R1;
+        R1 = (float)(int32_t)RD(ar2 + 29);                  /* 1F99 */
+        R1 = R1 * R1;
+        work += 9;
+        if (R0 < R1) {                                      /* 1F9B-1F9C BLT 1FA4 */
+            float d = R0 - R1;
+            setf(0, R0); setf(1, R1);
+            r[AR2] = ar2;
+            C.r[C3X_ST] = (C.r[C3X_ST] & ~0x1Fu) | (d < 0.0f ? F_N : 0) | (d == 0.0f ? F_Z : 0);
+            C.cyc += work;
+            return 0x001FA4u;
+        }
+        ar2 = RD(ar2 + 32) & 0xFFFFFFu;                     /* 1F9D */
+        work += 7;
+        if (ar2 == 0) {
+            /* 1FA0-1FA2 en las ranuras con AR2 = 0, despues BU 1FAD */
+            R0 = R3 - MF(1);
+            R1 = R2 - MF(3);
+            R1 = R1 * R1;
+            setf(0, R0); setf(1, R1);
+            r[AR2] = 0;
+            FL_FLT(R1);
+            C.cyc += work + 4;
+            return 0x001FADu;
+        }
+    }
+}
+
+/* ------------------------------------------------------------------------ */
 /* Distancia de dibujado (entrada de la rutina 0x20FF)                       */
 /* ------------------------------------------------------------------------ */
 

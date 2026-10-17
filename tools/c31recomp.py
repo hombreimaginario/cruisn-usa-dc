@@ -67,6 +67,7 @@ HLE_HOOKS = {
     0x00213E: ("hle_model_visible", (0x00216B, 0x002175)),  # visibilidad de modelo
     0x007189: ("hle_zsort", (0x0071A8, 0x0071A9)),          # OBJ.ASM ZSORTWL
     0x00207A: ("hle_obj_near", (0x00208B,)),                # objeto cercano en una lista
+    0x001F94: ("hle_obj_scan", (0x001FA4, 0x001FAD)),                # objetos de una lista alrededor de un punto
     0x0020FF: ("hle_model_lod", (0x002107,)),               # distancia de dibujado de modelos
 }
 

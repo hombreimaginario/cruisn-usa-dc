@@ -296,6 +296,7 @@ uint32_t hle_poly_emit_quad(void);
 uint32_t hle_model_visible(void);
 uint32_t hle_zsort(void);
 uint32_t hle_obj_near(void);
+uint32_t hle_obj_scan(void);
 uint32_t hle_model_lod(void);
 /* Aparicion gradual de objetos lejanos (hle.c) */
 extern int hle_fade_on;
