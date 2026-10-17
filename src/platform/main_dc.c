@@ -157,7 +157,7 @@ static void hidden_text(void)
     } else if ((mode & 0x2CF) == 0x203) {
         pvrr_text_row = hidden_on ? 3 : 2;
         pvrr_text_y = 208.0f;                   /* bajo CHOOSE RACE, en el hueco */
-        pvrr_text_scale = 0.78f;                /* hasta los iconos hay 15 pixeles */
+        pvrr_text_scale = 0.95f;                /* hasta los iconos hay 13 pixeles */
     }
 }
 
