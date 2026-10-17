@@ -594,8 +594,10 @@ static int thin_tri(const packet *d, int a, int b, int c)
     float l2 = (cx - bx) * (cx - bx) + (cy - by) * (cy - by);
     float l3 = (ax - cx) * (ax - cx) + (ay - cy) * (ay - cy);
     float lm = l1 > l2 ? (l1 > l3 ? l1 : l3) : (l2 > l3 ? l2 : l3);
-    /* alto = |cr| / lado; alto < 0,5  <=>  cr^2 < 0,25 * lado^2 */
-    return cr * cr < 0.25f * lm;
+    /* alto = |cr| / lado; alto < 0,5  <=>  cr^2 < 0,25 * lado^2. Con <= entran
+     * tambien los triangulos reducidos a un punto (lm = 0): los coches
+     * lejanos traen decenas por frame y con < se enviaban al PVR. */
+    return cr * cr <= 0.25f * lm;
 }
 
 static void submit_list(pvr_list_t list, const draw_item *it, int n)
