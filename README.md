@@ -47,7 +47,7 @@ python3 tools/c31recomp.py generated/program.bin generated/recomp --coverage gen
 tools/make_sound.sh ~/ruta/a/roms/de/mame
 
 # 7. Pantalla de carga (opcional): logo y "NOW LOADING" sacados de la ROM
-make -f Makefile.host recomp && tools/make_loading.py
+make -f Makefile.host recomp && tools/make_loading.py && tools/make_texts.py
 
 # 8. Compilar para Dreamcast e imagen de CD
 source $KOS_BASE/environ.sh
@@ -68,16 +68,17 @@ make && make cdi
 | X | cambiar de emisora de radio |
 | START | empezar |
 | START + Y | botón de servicio (menú de ajustes del arcade) |
-| X mantenido fuera de la carrera | secretos del arcade (ver abajo) |
+| X fuera de la carrera | activa / desactiva los secretos del arcade (ver abajo) |
 
 El juego está siempre en juego libre (no hace falta meter monedas).
 
 Secretos del arcade (en el mueble se activaban con combinaciones de botones de
-vista): con X pulsado al elegir coche aparecen los coches ocultos (jeep,
-autobús escolar y coche de policía en lugar de los tres primeros); con X
-pulsado al elegir pista, las carreras 1, 6 y 9 cambian a sus versiones
-ocultas; y con X pulsado al pulsar START en la pantalla de continuar se
-recorre todo el país seguido (Cruise the USA).
+vista): al elegir coche y al elegir pista aparece el rótulo PRESS X FOR
+HIDDEN CARS / TRACKS. Con los secretos activos, el coche seleccionado pasa a
+ser el oculto (jeep, autobús escolar o coche de policía en lugar de los tres
+primeros), las carreras 1, 6 y 9 cambian a sus versiones ocultas, y START en
+la pantalla de continuar recorre todo el país seguido (Cruise the USA). X
+vuelve a lo normal. Los rótulos salen de `tools/make_texts.py` (generated/texts.bin).
 
 Con un Puru Puru (Jump Pack) el mando vibra en los choques (golpe medio con coches, fuerte con paredes) y tiembla fuera de la carretera, en los mismos momentos en que el volante con motor del arcade daba tirones.
 

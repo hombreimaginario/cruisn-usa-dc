@@ -919,6 +919,12 @@ static void diag_draw(void)
 #define diag_draw() ((void)0)
 #endif
 
+static void text_draw(void);
+int pvrr_text_row = -1;
+float pvrr_text_y;
+static const uint32_t *texts_img;
+static pvr_ptr_t texts_tex;
+
 static int render_page(int page, int shot)
 {
     unsigned skipped_now = 0;
@@ -1079,6 +1085,7 @@ static int render_page(int page, int shot)
     pvr_list_finish();
     pvr_list_begin(PVR_LIST_PT_POLY);
     submit_list(PVR_LIST_PT_POLY, items[1], n_pt);
+    text_draw();
     pvr_list_finish();
     pvr_list_begin(PVR_LIST_TR_POLY);
     submit_list(PVR_LIST_TR_POLY, items[2], n_tr);
@@ -1189,6 +1196,12 @@ int pvrr_init(void)
     if (!page_polys[0] || !page_polys[1])
         return -1;
     pool_init();
+    if (texts_img) {                    /* rotulos: reservar antes que las texturas del juego */
+        texts_tex = pool_alloc(512 * 128 * 2);
+        if (texts_tex)
+            pvr_txr_load(texts_img + 4, texts_tex, 512 * 128 * 2);
+        printf("rotulos: textura %p\n", (void *)texts_tex);
+    }
 #ifdef CUSA_DIAG
     diag_init();
 #endif
@@ -1239,6 +1252,48 @@ static void loading_quad(pvr_ptr_t tex, int tw, int th, float x0, float y0, floa
         v.z = 1.0f;
         v.u = us[k];
         v.v = vs[k];
+        v.argb = 0xFFFFFFFFu;
+        v.oargb = 0;
+        pvr_prim(&v, sizeof(v));
+    }
+}
+
+/* ---- rotulos del port (PRESS X FOR HIDDEN CARS...) ---- */
+
+
+void pvrr_set_texts(const uint32_t *buf)
+{
+    texts_img = buf;
+}
+
+static void text_draw(void)
+{
+    pvr_poly_cxt_t cxt;
+    pvr_poly_hdr_t hdr;
+    pvr_vertex_t v;
+    int k, row = pvrr_text_row;
+    float w, x0, y0, x1, y1, v0, v1;
+    if (row < 0 || row > 3 || !texts_tex)
+        return;
+    w = (float)texts_img[row];
+    x0 = (256.0f - w * 0.5f) * SX;
+    x1 = x0 + 512.0f * SX;              /* la fila entera; lo que sobra es transparente */
+    y0 = pvrr_text_y * SY;
+    y1 = y0 + 24.0f * SY;
+    v0 = (float)row * 24.0f / 128.0f;
+    v1 = v0 + 24.0f / 128.0f;
+    pvr_poly_cxt_txr(&cxt, PVR_LIST_PT_POLY, PVR_TXRFMT_ARGB1555 | PVR_TXRFMT_NONTWIDDLED,
+                     512, 128, texts_tex, PVR_FILTER_NONE);
+    cxt.gen.culling = PVR_CULLING_NONE;
+    pvr_poly_compile(&hdr, &cxt);
+    pvr_prim(&hdr, sizeof(hdr));
+    for (k = 0; k < 4; k++) {
+        v.flags = k == 3 ? PVR_CMD_VERTEX_EOL : PVR_CMD_VERTEX;
+        v.x = (k & 1) ? x1 : x0;
+        v.y = (k & 2) ? y1 : y0;
+        v.z = 4.0f;                         /* por encima de todo */
+        v.u = (k & 1) ? 1.0f : 0.0f;
+        v.v = (k & 2) ? v1 : v0;
         v.argb = 0xFFFFFFFFu;
         v.oargb = 0;
         pvr_prim(&v, sizeof(v));

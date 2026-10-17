@@ -125,22 +125,38 @@ static void *load_file(const char *path, size_t *size_out)
  * HIDDEN_TRACKS, INTRO.ASM "Secret Button Combo"): se activan manteniendo
  * pulsados dos botones de vista al elegir coche o pista, y radio mas las tres
  * vistas al pulsar START en la pantalla de continuar (recorrer todo el pais).
- * Con el mando, X (radio) hace de modificador fuera de la carrera: el port
- * anade las vistas que toca segun la pista senalada (_MODE en C8C5,
- * CHOSEN_RACE en E634; carreras 1, 6 y 9 tienen version oculta).
+ * Con el mando, X alterna "secretos" fuera de la carrera (en carrera X es la
+ * radio): con los secretos activos el port anade las vistas que toca segun
+ * la pista senalada (_MODE en C8C5, CHOSEN_RACE en E634; las carreras 1, 6 y
+ * 9 tienen version oculta). Al elegir coche o pista se muestra el rotulo
+ * PRESS X FOR HIDDEN/NORMAL CARS/TRACKS (tools/make_texts.py).
  */
+static int hidden_on;
+
 static uint32_t hidden_mod(uint32_t sw)
 {
     uint32_t mode = vu.fastram[0xC8C5] & 0xF, race = vu.fastram[0xE634];
-    if (mode == 4)                              /* MGAME: X solo es la radio */
-        return sw;
     if (mode == 7)                              /* MINSERT_COINS: continuar */
-        return sw | SW_VIEW0 | SW_VIEW1 | SW_VIEW2;
+        return sw | SW_RADIO | SW_VIEW0 | SW_VIEW1 | SW_VIEW2;
     if (race == 6)
         return sw | SW_VIEW0 | SW_VIEW2;
     if (race == 9)
         return sw | SW_VIEW1 | SW_VIEW2;
     return sw | SW_VIEW0 | SW_VIEW1;            /* pista 1 y coches ocultos */
+}
+
+/* rotulo segun la pantalla: elegir coche (_MODE 2C3) o pista (203) */
+static void hidden_text(void)
+{
+    uint32_t mode = vu.fastram[0xC8C5];
+    pvrr_text_row = -1;
+    if ((mode & 0x2CF) == 0x2C3) {
+        pvrr_text_row = hidden_on ? 1 : 0;
+        pvrr_text_y = 97.0f;                    /* entre CHOOSE CAR y las fichas */
+    } else if ((mode & 0x2CF) == 0x203) {
+        pvrr_text_row = hidden_on ? 3 : 2;
+        pvrr_text_y = 209.0f;                   /* bajo CHOOSE RACE */
+    }
 }
 
 static int gear;
@@ -188,8 +204,17 @@ static void read_inputs(void)
             sw |= views[view];
         }
     }
-    if (b & CONT_X)
-        sw = hidden_mod(sw | SW_RADIO);
+    if ((vu.fastram[0xC8C5] & 0xF) == 4) {      /* MGAME */
+        hidden_on = 0;
+        if (b & CONT_X)
+            sw |= SW_RADIO;
+    } else {
+        if ((b & CONT_X) && !(prev & CONT_X))
+            hidden_on = !hidden_on;
+        if (hidden_on)
+            sw = hidden_mod(sw);
+    }
+    hidden_text();
     prev = b;
 
     vu.in.switches = sw;
@@ -225,9 +250,11 @@ static void read_inputs(void)
         if (f >= 1300 && f <= 2300 && (f - 1300) % 200 < 5)
             sw |= SW_START;
 #ifdef AUTO_HIDDEN
-        if (f >= 1250 && f < 2400)      /* como X pulsado al elegir */
-            sw = hidden_mod(sw | SW_RADIO);
+        hidden_on = f >= 1250 && f < 2400;      /* como X pulsado al elegir */
+        if (hidden_on)
+            sw = hidden_mod(sw);
 #endif
+        hidden_text();
         vu.in.switches = sw;
         vu.in.wheel = 0x80;
 #ifdef AUTO_WHEEL
@@ -388,6 +415,10 @@ static void vblank(void)
         unsigned conv, drawn, pages = pvrr_pages();
         pvrr_stats(&conv, &drawn);
 #ifdef CUSA_STATS
+#ifdef AUTO_HIDDEN
+        printf("  hidden: on %d sw %08X mode %03X race %u fila %d\n", hidden_on, (unsigned)vu.in.switches,
+               (unsigned)vu.fastram[0xC8C5], (unsigned)vu.fastram[0xE634], pvrr_text_row);
+#endif
         printf("frame %d polis=%u dibujados=%u texturas=%u imagenes=%u  %u ms por segundo de juego, %u ms libres\n",
                frame, (unsigned)vu.polys_frame, drawn, conv, pages, (unsigned)(t - t0), (unsigned)(idle_us / 1000));
         printf("  interrupciones por imagen: 1:%u 2:%u 3:%u 4:%u 5+:%u\n",
@@ -808,6 +839,14 @@ int main(int argc, char **argv)
             free(img);
             tf_draw((uint16_t *)vram_s + 220 * 640 + 236, 640, "CRUIS'N USA", 0xFFFF, 0x0000);
             tf_draw((uint16_t *)vram_s + 250 * 640 + 248, 640, "NOW LOADING", 0xFFFF, 0x0000);
+        }
+        /* rotulos de los secretos (tools/make_texts.py) */
+        uint32_t *tx = load_file("/cd/texts.bin", &ln);
+        if (tx && ln == 16 + 512 * 128 * 2)
+            pvrr_set_texts(tx);
+        else {
+            printf("aviso: sin /cd/texts.bin (%u bytes)\n", (unsigned)ln);
+            free(tx);
         }
     }
 #if defined(CUSA_VERSION) && defined(CUSA_DIAG)

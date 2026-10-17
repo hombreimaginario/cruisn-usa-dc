@@ -14,7 +14,11 @@ int pvrr_init(void);
 void pvrr_frame(int shot);
 /* Imagen de la pantalla de carga (logo 256x256 + texto 512x64, ARGB1555):
  * se muestra hasta el primer frame con poligonos y despues se libera */
-void pvrr_set_loading(const uint16_t *img);      /* llamar en cada interrupcion de video */
+void pvrr_set_loading(const uint16_t *img);
+/* rotulos de tools/make_texts.py (4 anchos + textura 512x128); fila a mostrar (-1: ninguna) */
+void pvrr_set_texts(const uint32_t *buf);
+extern int pvrr_text_row;
+extern float pvrr_text_y;                     /* en pixeles del arcade (400) */      /* llamar en cada interrupcion de video */
 /* Depuracion: reservar ya la textura de las capturas (CUSA_SHOT) */
 void pvrr_reserve_shot(void);
 void pvrr_stats(unsigned *converted, unsigned *polys);

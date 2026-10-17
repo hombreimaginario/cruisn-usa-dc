@@ -340,6 +340,8 @@ void rt_platform_event(void)
     if (rt_cycles() < frame_end)
         return;
     frame++;
+    if (getenv("CUSA_MODELOG") && frame % 25 == 0)
+        printf("modelog %d %03X %u\n", frame, (unsigned)vu.fastram[0xC8C5], (unsigned)vu.fastram[0xE634]);
     if (getenv("CUSA_NFHIST")) {        /* NFRAMES por tramos de 100 frames */
         static unsigned h[8];
         h[vu.fastram[0xC92F] & 7]++;

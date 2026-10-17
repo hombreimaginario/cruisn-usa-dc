@@ -85,6 +85,7 @@ cdi: $(TARGET)
 		-f $(GENERATED)/program.bin -f $(GENERATED)/gfx.bin \
 		$(if $(wildcard $(GENERATED)/cmos.bin),-f $(GENERATED)/cmos.bin) \
 		$(if $(wildcard $(GENERATED)/sound.bin),-f $(GENERATED)/sound.bin) \
-		$(if $(wildcard $(GENERATED)/loading.bin),-f $(GENERATED)/loading.bin)
+		$(if $(wildcard $(GENERATED)/loading.bin),-f $(GENERATED)/loading.bin) \
+		$(if $(wildcard $(GENERATED)/texts.bin),-f $(GENERATED)/texts.bin)
 
 .PHONY: all clean rm-elf run cdi
