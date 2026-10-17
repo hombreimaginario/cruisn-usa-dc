@@ -261,8 +261,39 @@ static uint32_t prof_last_pc;
 static uint32_t blk_ring[64];
 static int ring_done;
 static unsigned blk_pos;
+/* CUSA_PCCOUNT=a,b,c: cuenta las entradas en esos bloques (por frame si
+   CUSA_PCCOUNT_EVERY) */
+static uint32_t pcc_addr[16], pcc_n[16];
+static int pcc_k;
 static void prof_hook(uint32_t pc)
 {
+    int q;
+    for (q = 0; q < pcc_k; q++)
+        if (pc == pcc_addr[q]) {
+            pcc_n[q]++;
+            if (getenv("CUSA_PCCOUNT_LOG"))
+                printf("pc %06X frame %d\n", (unsigned)pc, frame);
+        }
+    if (pc == 0x221F && getenv("CUSA_SIGNLOG")) {   /* COLSGCK: coche y senal */
+        uint32_t a0 = C.r[8], a1 = C.r[9], cb = RD(a0 + 27) & 0xFFFFFF;
+        int k;
+        printf("sign f%d car %06X pos %g %g %g m", frame, (unsigned)a0, c3x_to_float(RD(a0 + 1)),
+               c3x_to_float(RD(a0 + 2)), c3x_to_float(RD(a0 + 3)));
+        for (k = 4; k < 13; k++) printf(" %g", c3x_to_float(RD(a0 + k)));
+        printf(" box");
+        for (k = 58; k < 64; k++) printf(" %g", c3x_to_float(RD(cb + k)));
+        printf(" sign %06X id %X pos %g %g\n", (unsigned)a1, (unsigned)RD(a1 + 15),
+               c3x_to_float(RD(a1 + 1)), c3x_to_float(RD(a1 + 3)));
+    }
+    if (pc == 0x2223 && getenv("CUSA_SIGNLOG")) {   /* esquinas de GETBOX */
+        uint32_t bl = RD((C.r[16] << 16) | 0x4F) & 0xFFFFFF, lq = RD((C.r[16] << 16) | 0x290C) & 0xFFFFFF;
+        int k;
+        printf("box %06X dp %X lq %06X:", (unsigned)bl, (unsigned)C.r[16], (unsigned)lq);
+        for (k = 0; k < 8; k++) printf(" %06X", (unsigned)RD(lq + k));
+        printf(" |");
+        for (k = 0; k < 26; k++) printf(" %g", c3x_to_float(RD(bl + k)));
+        printf("\n");
+    }
     blk_ring[blk_pos++ & 63] = pc;
     if (pc == 0x4AD5 || pc == 0x4B2B || (getenv("CUSA_RING_AT") && frame == atoi(getenv("CUSA_RING_AT")) && !ring_done++)) {
         unsigned k;
@@ -401,6 +432,11 @@ void rt_platform_event(void)
 #ifdef RT_TRACE_ON
         if (prof_cycles)
             prof_report();
+        {
+            int q;
+            for (q = 0; q < pcc_k; q++)
+                printf("pccount %06X: %u\n", (unsigned)pcc_addr[q], (unsigned)pcc_n[q]);
+        }
 #endif
         if (sound_wav)
             sound_preview_close();
@@ -475,6 +511,13 @@ int main(int argc, char **argv)
     prof_cycles = calloc(0x1000000, sizeof(uint64_t));
     prof_from = getenv("CUSA_PROF_FROM") ? atoi(getenv("CUSA_PROF_FROM")) : 0;
     rt_trace_hook = prof_hook;
+    if (getenv("CUSA_PCCOUNT")) {
+        const char *q = getenv("CUSA_PCCOUNT");
+        while (*q && pcc_k < 16) {
+            pcc_addr[pcc_k++] = (uint32_t)strtoul(q, (char **)&q, 16);
+            if (*q == ',') q++;
+        }
+    }
 #endif
     apply_inputs(0);
     t_start = clock();

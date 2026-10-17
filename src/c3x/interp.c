@@ -242,6 +242,26 @@ static inline uint32_t ea8(c3x_state *cpu, uint32_t f)
     return ea_indirect(cpu, (f >> 3) & 0x1F, f & 7, 1) & 0xFFFFFF;
 }
 
+/* Dos operandos indirectos de una misma instruccion (3 operandos o
+ * paralelas): el C3x calcula ambas direcciones con el valor original de los
+ * ARn. Si comparten ARn y solo el primero lo modifica, el segundo va antes. */
+static inline int ea8_modifies(uint32_t f)
+{
+    uint32_t mod = (f >> 3) & 0x1F;
+    return mod == 0x19 || (mod < 0x18 && (mod & 7) >= 2);
+}
+
+static inline void ea8_pair(c3x_state *cpu, uint32_t fa, uint32_t fb, uint32_t *a, uint32_t *b)
+{
+    if ((fa & 7) == (fb & 7) && ea8_modifies(fa) && !ea8_modifies(fb)) {
+        *b = ea8(cpu, fb);
+        *a = ea8(cpu, fa);
+    } else {
+        *a = ea8(cpu, fa);
+        *b = ea8(cpu, fb);
+    }
+}
+
 static inline uint32_t ea_direct(c3x_state *cpu, uint32_t f)
 {
     return ((cpu->r[C3X_DP] & 0xFF) << 16) | (f & 0xFFFF);
@@ -733,7 +753,14 @@ static void exec_three(c3x_state *cpu, uint32_t w)
 
     /* Fuente 1 (bits 15-8) y fuente 2 (bits 7-0). La sintaxis TI es
      * OP3 src2,src1,dst con dst = src1 OP src2. */
-    if (isflt) {
+    if (t == 3) {
+        uint32_t a1, a2;
+        ea8_pair(cpu, f1, f2, &a1, &a2);
+        s1 = rd(a1);
+        s2 = rd(a2);
+        x1 = ext_from_mem(s1);
+        x2 = ext_from_mem(s2);
+    } else if (isflt) {
         x1 = (t & 1) ? ext_from_mem(rd(ea8(cpu, f1))) : reg_ext(cpu, f1 & 0x1F);
         x2 = (t & 2) ? ext_from_mem(rd(ea8(cpu, f2))) : reg_ext(cpu, f2 & 0x1F);
     } else {
@@ -776,8 +803,8 @@ static void exec_par_mpy(c3x_state *cpu, uint32_t w)
     int d1 = (w >> 23) & 1;
     int d2 = 2 + ((w >> 22) & 1);
     int r1 = (w >> 19) & 7, r2 = (w >> 16) & 7;
-    uint32_t a3 = ea8(cpu, (w >> 8) & 0xFF);
-    uint32_t a4 = ea8(cpu, w & 0xFF);
+    uint32_t a3, a4;
+    ea8_pair(cpu, (w >> 8) & 0xFF, w & 0xFF, &a3, &a4);
 
     if (op < 2) {
         ext_t s1 = reg_ext(cpu, r1), s2 = reg_ext(cpu, r2);
@@ -819,8 +846,8 @@ static void exec_par_store(c3x_state *cpu, uint32_t w)
     int r1 = (w >> 22) & 7;   /* dst1 / fuente del primer STx */
     int rs1 = (w >> 19) & 7;  /* src1 / dst2 de LD||LD */
     int rs2 = (w >> 16) & 7;  /* registro del segundo STx */
-    uint32_t a3 = ea8(cpu, (w >> 8) & 0xFF);
-    uint32_t a2 = ea8(cpu, w & 0xFF);
+    uint32_t a3, a2;
+    ea8_pair(cpu, (w >> 8) & 0xFF, w & 0xFF, &a3, &a2);
     uint32_t st_int = REG(rs2);
     ext_t st_flt = reg_ext(cpu, rs2);
     uint32_t v, res;

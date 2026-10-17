@@ -388,5 +388,13 @@ int main(int argc, char **argv)
             printf("frame %d: %d pruebas, %d fallos\n", frame + 1, tests, failures);
     }
     printf("total: %d pruebas, %d funciones con diferencias\n", tests, failures);
+    if (getenv("CUSA_DT_SHOW")) {         /* pruebas hechas de esas funciones */
+        const char *q = getenv("CUSA_DT_SHOW");
+        while (*q) {
+            uint32_t a = (uint32_t)strtoul(q, (char **)&q, 16);
+            printf("  %06X: %d pruebas\n", (unsigned)a, a < VU_FASTRAM_WORDS ? tested[a] : -1);
+            if (*q == ',') q++; else break;
+        }
+    }
     return 0;
 }

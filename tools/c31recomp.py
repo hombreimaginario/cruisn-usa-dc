@@ -71,6 +71,11 @@ HLE_HOOKS = {
 }
 
 
+def ind8_modifies(f):
+    mod = (f >> 3) & 0x1F
+    return mod == 0x19 or (mod < 0x18 and (mod & 7) >= 2)
+
+
 def in_space(a):
     return 0x40 <= a < CODE_END or ROM_BASE <= a < ROM_END
 
@@ -567,6 +572,17 @@ class Gen:
     def ind8(self, f):
         return self.ind((f >> 3) & 0x1F, f & 7, 1)
 
+    def ind8_pair(self, fa, fb):
+        """Dos operandos indirectos de la misma instruccion: el C3x calcula
+        ambas direcciones con el valor original de los ARn, asi que si los dos
+        usan el mismo ARn y solo el primero lo modifica, el segundo va antes
+        (p. ej. STF R0,*-AR2(1) || STF R1,*AR2++(IR0) en GETBOX)."""
+        if (fa & 7) == (fb & 7) and ind8_modifies(fa) and not ind8_modifies(fb):
+            eb = self.ind8(fb)
+            return self.ind8(fa), eb
+        ea = self.ind8(fa)
+        return ea, self.ind8(fb)
+
     def ind16(self, f):
         return self.ind((f >> 11) & 0x1F, (f >> 8) & 7, f & 0xFF)
 
@@ -875,8 +891,12 @@ class Gen:
         fl = ext(d)
 
         if isflt:
-            s1 = "c3x_to_float(RD(%s))" % self.ind8(f1) if t & 1 else self.freg(f1 & 0x1F)
-            s2 = "c3x_to_float(RD(%s))" % self.ind8(f2) if t & 2 else self.freg(f2 & 0x1F)
+            if t == 3:
+                e1, e2 = self.ind8_pair(f1, f2)
+                s1, s2 = "c3x_to_float(RD(%s))" % e1, "c3x_to_float(RD(%s))" % e2
+            else:
+                s1 = "c3x_to_float(RD(%s))" % self.ind8(f1) if t & 1 else self.freg(f1 & 0x1F)
+                s2 = "c3x_to_float(RD(%s))" % self.ind8(f2) if t & 2 else self.freg(f2 & 0x1F)
             self.emit("xa = %s; xb = %s;" % (s1, s2))
             if op == 0x06:
                 self.set_flags(fl_cmpf(), live)
@@ -890,8 +910,12 @@ class Gen:
 
         if (not (t & 1)) and (f1 & 0x1F) == R_ST or (not (t & 2)) and (f2 & 0x1F) == R_ST:
             self.materialize()
-        s1 = "RD(%s)" % self.ind8(f1) if t & 1 else self.ri(f1 & 0x1F)
-        s2 = "RD(%s)" % self.ind8(f2) if t & 2 else self.ri(f2 & 0x1F)
+        if t == 3:
+            e1, e2 = self.ind8_pair(f1, f2)
+            s1, s2 = "RD(%s)" % e1, "RD(%s)" % e2
+        else:
+            s1 = "RD(%s)" % self.ind8(f1) if t & 1 else self.ri(f1 & 0x1F)
+            s2 = "RD(%s)" % self.ind8(f2) if t & 2 else self.ri(f2 & 0x1F)
         if op in (0x00, 0x0C):
             self.materialize()
         self.emit("fa = %s; fb = %s;" % (s1, s2))
@@ -986,8 +1010,7 @@ class Gen:
         d1 = (w >> 23) & 1
         d2 = 2 + ((w >> 22) & 1)
         r1, r2 = (w >> 19) & 7, (w >> 16) & 7
-        e3 = self.ind8((w >> 8) & 0xFF)
-        e4 = self.ind8(w & 0xFF)
+        e3, e4 = self.ind8_pair((w >> 8) & 0xFF, w & 0xFF)
         if op < 2:
             self.emit("x0 = %s; x1 = %s; x2 = c3x_to_float(RD(%s)); x3 = c3x_to_float(RD(%s));"
                       % (self.rf(r1), self.rf(r2), e3, e4))
@@ -1013,8 +1036,7 @@ class Gen:
         w = i.w
         op = (w >> 25) & 0x1F
         r1, rs1, rs2 = (w >> 22) & 7, (w >> 19) & 7, (w >> 16) & 7
-        e3 = self.ind8((w >> 8) & 0xFF)
-        e2 = self.ind8(w & 0xFF)
+        e3, e2 = self.ind8_pair((w >> 8) & 0xFF, w & 0xFF)
         if op == 0x00:
             self.emit("t0 = float_to_c3x(%s); t1 = float_to_c3x(%s); WR(%s, t0); WR(%s, t1);"
                       % (self.rf(r1), self.rf(rs2), e2, e3))
