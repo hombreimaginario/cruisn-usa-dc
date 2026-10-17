@@ -49,7 +49,8 @@ $(RECOMP_SRCS:.c=.o): KOS_CFLAGS += -Os
 # un 3 % mas rapida a cambio de ~400 KB. Los demas no ganan nada.
 RECOMP_HOT ?= $(RECOMP_DIR)/rc_000.o
 ifneq ($(RECOMP_HOT),)
-$(RECOMP_HOT): KOS_CFLAGS += -O2
+HOT_OPT ?= -O2
+$(RECOMP_HOT): KOS_CFLAGS += $(HOT_OPT)
 endif
 
 all: rm-elf $(TARGET)

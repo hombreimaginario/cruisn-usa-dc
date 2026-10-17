@@ -218,6 +218,14 @@ static inline __attribute__((always_inline)) uint32_t fixc(uint32_t v)
     return m < 0 ? 0x80000000u : 0x7FFFFFFFu;
 }
 
+/* FIX de un flotante ya convertido (parte entera hacia abajo); mismo
+ * resultado que fixc() del valor C3x original dentro del rango entero */
+static inline __attribute__((always_inline)) uint32_t fixf(float x)
+{
+    int32_t i = (int32_t)x;
+    return (uint32_t)(i - ((float)i > x));
+}
+
 static inline __attribute__((always_inline)) float mf(uint32_t a)
 {
     a &= 0xFFFFFFu;
@@ -709,12 +717,12 @@ uint32_t hle_poly_emit(void)
             ar3 = r3 * 3;
             w0 = rdm(ar1);
             ar1 += 2;
-            xy[0] = fixc(wx4);
-            xy[1] = fixc(wy4);
-            xy[2] = fixc(wx5);
-            xy[3] = fixc(wy5);
-            xy[4] = fixc(wx2);
-            xy[5] = fixc(wy2);
+            xy[0] = fixf(x4);
+            xy[1] = fixf(y4);
+            xy[2] = fixf(x5);
+            xy[3] = fixf(y5);
+            xy[4] = fixf(x2);
+            xy[5] = fixf(y2);
             xy[6] = fixc(MW(ar3 + ir0));
             xy[7] = fixc(MW(ar3 + ir1));
             i0 = rdm(ar1); i1 = rdm(ar1 + 1); i2 = rdm(ar1 + 2);
@@ -815,12 +823,12 @@ uint32_t hle_poly_emit_pal(void)
             ar3 = r3 * 3;                                   /* 0479 */
             ar6 = rt_shift(w0, r6, 0, 0) + bk;              /* 0478, 047A */
             w1 = rt_shift(rdm(ar6), r6, 0, 0) << 8;          /* 047B-047C */
-            xy[0] = fixc(wx4);
-            xy[1] = fixc(wy4);
-            xy[2] = fixc(wx5);
-            xy[3] = fixc(wy5);
-            xy[4] = fixc(wx2);
-            xy[5] = fixc(wy2);
+            xy[0] = fixf(x4);
+            xy[1] = fixf(y4);
+            xy[2] = fixf(x5);
+            xy[3] = fixf(y5);
+            xy[4] = fixf(x2);
+            xy[5] = fixf(y2);
             xy[6] = fixc(MW(ar3 + ir0));
             xy[7] = fixc(MW(ar3 + ir1));
             i0 = rdm(ar1); i1 = rdm(ar1 + 1); i2 = rdm(ar1 + 2);
@@ -935,12 +943,12 @@ uint32_t hle_poly_emit_quad(void)
             wx3 = MW(ar3 + ir0);
             w0 = rdm(ar1);                                   /* 057F */
             ar1 += 2;
-            xy[0] = fixc(wx4);
-            xy[1] = fixc(wy4);
-            xy[2] = fixc(wx5);
-            xy[3] = fixc(wy5);
-            xy[4] = fixc(wx2);
-            xy[5] = fixc(wy2);
+            xy[0] = fixf(x4);
+            xy[1] = fixf(y4);
+            xy[2] = fixf(x5);
+            xy[3] = fixf(y5);
+            xy[4] = fixf(x2);
+            xy[5] = fixf(y2);
             xy[6] = fixc(wx3);
             xy[7] = fixc(wy3);
             i0 = rdm(ar1); i1 = rdm(ar1 + 1); i2 = rdm(ar1 + 2);

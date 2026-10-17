@@ -68,8 +68,16 @@ make && make cdi
 | X | cambiar de emisora de radio |
 | START | empezar |
 | START + Y | botón de servicio (menú de ajustes del arcade) |
+| X mantenido fuera de la carrera | secretos del arcade (ver abajo) |
 
 El juego está siempre en juego libre (no hace falta meter monedas).
+
+Secretos del arcade (en el mueble se activaban con combinaciones de botones de
+vista): con X pulsado al elegir coche aparecen los coches ocultos (jeep,
+autobús escolar y coche de policía en lugar de los tres primeros); con X
+pulsado al elegir pista, las carreras 1, 6 y 9 cambian a sus versiones
+ocultas; y con X pulsado al pulsar START en la pantalla de continuar se
+recorre todo el país seguido (Cruise the USA).
 
 Con un Puru Puru (Jump Pack) el mando vibra en los choques (golpe medio con coches, fuerte con paredes) y tiembla fuera de la carretera, en los mismos momentos en que el volante con motor del arcade daba tirones.
 
