@@ -43,6 +43,13 @@ src/recomp/hle.o src/platform/pvr_render.o: KOS_CFLAGS += -O3 -funroll-loops
 # ocupa 1,8 MB menos y en carrera va igual o algo mejor (menos fallos de
 # cache de instrucciones).
 $(RECOMP_SRCS:.c=.o): KOS_CFLAGS += -Os
+# Ficheros del codigo traducido que van con -O2: rc_000 tiene el bucle del
+# juego y DIRQ (lo mas caliente); con -O2 la prueba determinista de Iowa va
+# un 3 % mas rapida a cambio de ~400 KB. Los demas no ganan nada.
+RECOMP_HOT ?= $(RECOMP_DIR)/rc_000.o
+ifneq ($(RECOMP_HOT),)
+$(RECOMP_HOT): KOS_CFLAGS += -O2
+endif
 
 all: rm-elf $(TARGET)
 
