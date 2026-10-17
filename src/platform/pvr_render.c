@@ -1284,19 +1284,15 @@ static int draw_loading(void)
         pvr_scene_begin_rtt(shot_tex, 640, 480, 640);
     else
         pvr_scene_begin();
-#ifdef CUSA_DIAG
-    diag_update();
-    diag_upload();
-#endif
+    /* Sin la linea de diagnostico en la pantalla de carga: con ella la
+     * version DIAG del 15/10 no arrancaba en la consola real (la del 12/10,
+     * sin ella, si). */
     pvr_list_begin(PVR_LIST_OP_POLY);
     {
         /* la ROM grafica que lee el arranque: unas 56 paginas de 32 KB */
         float f = (float)wd_counters[WD_CD_GFX] / 56.0f;
         loading_bar(f > 1.0f ? 1.0f : f);
     }
-#ifdef CUSA_DIAG
-    diag_draw();
-#endif
     pvr_list_finish();
     pvr_list_begin(PVR_LIST_PT_POLY);
     /* logo 254x192 del arcade a la escala del port (1,25 x 1,2), centrado */
