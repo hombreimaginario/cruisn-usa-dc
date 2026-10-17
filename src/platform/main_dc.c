@@ -235,7 +235,7 @@ static void present(void)
 /* ---- perfil por muestreo (compilar con -DCUSA_PROF) ---- */
 
 #ifdef CUSA_PROF
-#define PROF_BUCKETS 65536
+#define PROF_BUCKETS 131072        /* 8 MB de codigo (el ELF pasa de 4 MB) */
 static uint32_t prof_hist[PROF_BUCKETS];
 
 static void prof_tick(irq_t code, irq_context_t *ctx, void *data)

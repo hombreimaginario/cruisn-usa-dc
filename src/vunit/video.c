@@ -90,6 +90,7 @@ static void draw_triangle(uint16_t *page, const vtx *a, const vtx *b, const vtx 
 }
 
 void (*vu_poly_hook)(const uint32_t *pkt, int page);
+void (*vu_poly_direct)(const uint32_t *xy, uint32_t w0, uint32_t w1, uint32_t uv01, uint32_t uv23, uint32_t w14);
 
 int vu_poly_fade = 63;
 

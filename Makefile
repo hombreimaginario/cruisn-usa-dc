@@ -36,7 +36,8 @@ src/platform/main_dc.o src/platform/watchdog.o: src/platform/version.h
 
 # Bucles calientes (HLE y render): -O3 con desenrollado da ~10% mas de
 # imagenes por segundo en carrera; el resto queda en -O2 por tamano.
-src/recomp/hle.o src/platform/pvr_render.o: KOS_CFLAGS += -O3 -funroll-loops
+HLE_OPT ?= -O3 -funroll-loops
+src/recomp/hle.o src/platform/pvr_render.o: KOS_CFLAGS += $(HLE_OPT)
 
 # Codigo traducido del C31 con -Os: con -O2 eran ~6 MB y la RAM de la
 # consola (16 MB) no daba para todo (fallaban reservas de memoria). Con -Os

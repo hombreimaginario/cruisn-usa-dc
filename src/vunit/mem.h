@@ -106,6 +106,11 @@ void vu_report_unmapped(void);
 /* video.c: si vu_poly_hook esta definido recibe los paquetes en vez del
  * rasterizador por software (page = pagina de destino). */
 extern void (*vu_poly_hook)(const uint32_t *pkt, int page);
+/* Atajo del envio de poligonos del codigo HLE: las 8 coordenadas ya en
+ * entero (palabras 2-9 del paquete), las palabras 0 y 1, los pares u/v de
+ * las palabras 10-13 empaquetados (u0v0 | u1v1 << 16, u2v2 | u3v3 << 16) y
+ * la palabra 14. Si es NULL se construye el paquete y va por vu_poly_packet. */
+extern void (*vu_poly_direct)(const uint32_t *xy, uint32_t w0, uint32_t w1, uint32_t uv01, uint32_t uv23, uint32_t w14);
 extern void (*vu_fifo_reset_hook)(void);   /* escritura en FIFO_CONTROL */
 extern void (*vu_sound_hook)(uint32_t value); /* escrituras en el puerto de sonido */
 extern void (*vu_wheel_hook)(uint32_t value); /* escrituras en la placa del volante */

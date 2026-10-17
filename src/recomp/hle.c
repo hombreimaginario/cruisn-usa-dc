@@ -605,6 +605,24 @@ static inline void seti(int n, uint32_t v)
     C.rk[n] = 2;
 }
 
+/* Paquete de poligono: directo al render (Dreamcast) o por la FIFO emulada */
+static inline __attribute__((always_inline)) void emit_pkt(const uint32_t *xy, uint32_t w0, uint32_t w1,
+                                                           uint32_t i0, uint32_t i1, uint32_t i2)
+{
+    vu.fifo_count = 0;
+    if (LIKELY(vu_poly_direct != NULL)) {
+        vu.polys_frame++;
+        vu_poly_direct(xy, w0, w1, i0, i1, i2);
+    } else {
+        uint32_t pkt[15];
+        pkt[0] = w0; pkt[1] = w1;
+        pkt[2] = xy[0]; pkt[3] = xy[1]; pkt[4] = xy[2]; pkt[5] = xy[3];
+        pkt[6] = xy[4]; pkt[7] = xy[5]; pkt[8] = xy[6]; pkt[9] = xy[7];
+        pkt[10] = i0; pkt[11] = i0 >> 16; pkt[12] = i1; pkt[13] = i1 >> 16; pkt[14] = i2;
+        vu_poly_packet(pkt);
+    }
+}
+
 /*
  * Para cada poligono del modelo: lee los 4 indices de vertice, descarta
  * los que miran hacia atras y envia el paquete de 15 palabras con las
@@ -687,30 +705,22 @@ uint32_t hle_poly_emit(void)
         /* 0537-054E: paquete de 15 palabras, directo al motor de poligonos
          * (equivale a las 15 escrituras en la FIFO y FIFO_INC) */
         {
-            uint32_t pkt[15];
+            uint32_t xy[8], w0;
             ar3 = r3 * 3;
-            pkt[0] = rdm(ar1);
+            w0 = rdm(ar1);
             ar1 += 2;
-            pkt[1] = r6;                                    /* 053C ... || STI R6 */
-            pkt[2] = fixc(wx4);
-            pkt[3] = fixc(wy4);
-            pkt[4] = fixc(wx5);
-            pkt[5] = fixc(wy5);
-            pkt[6] = fixc(wx2);
-            pkt[7] = fixc(wy2);
-            pkt[8] = fixc(MW(ar3 + ir0));
-            pkt[9] = fixc(MW(ar3 + ir1));
+            xy[0] = fixc(wx4);
+            xy[1] = fixc(wy4);
+            xy[2] = fixc(wx5);
+            xy[3] = fixc(wy5);
+            xy[4] = fixc(wx2);
+            xy[5] = fixc(wy2);
+            xy[6] = fixc(MW(ar3 + ir0));
+            xy[7] = fixc(MW(ar3 + ir1));
             i0 = rdm(ar1); i1 = rdm(ar1 + 1); i2 = rdm(ar1 + 2);
             ar1 += 3;
-            pkt[10] = i0;
-            pkt[11] = i0 >> 16;
-            pkt[12] = i1;
-            pkt[13] = i1 >> 16;
-            pkt[14] = i2;
-            i0 >>= 16;
+            emit_pkt(xy, w0, r6, i0, i1, i2);               /* 053C STI R6 ... 054E FIFO_INC */
             i1 >>= 16;
-            vu.fifo_count = 0;
-            vu_poly_packet(pkt);                            /* 054E LDI @FIFO_INC */
             i0 = 0;
             work += 24;
         }
@@ -799,31 +809,24 @@ uint32_t hle_poly_emit_pal(void)
             return POP() & 0xFFFFFFu;
         }
         {
-            uint32_t pkt[15], w0, i0;
+            uint32_t xy[8], w0, w1, i0;
             w0 = rdm(ar1);                                   /* 0477 */
             ar1 += 2;
             ar3 = r3 * 3;                                   /* 0479 */
             ar6 = rt_shift(w0, r6, 0, 0) + bk;              /* 0478, 047A */
-            pkt[0] = w0;
-            pkt[1] = rt_shift(rdm(ar6), r6, 0, 0) << 8;      /* 047B-047C */
-            pkt[2] = fixc(wx4);
-            pkt[3] = fixc(wy4);
-            pkt[4] = fixc(wx5);
-            pkt[5] = fixc(wy5);
-            pkt[6] = fixc(wx2);
-            pkt[7] = fixc(wy2);
-            pkt[8] = fixc(MW(ar3 + ir0));
-            pkt[9] = fixc(MW(ar3 + ir1));
+            w1 = rt_shift(rdm(ar6), r6, 0, 0) << 8;          /* 047B-047C */
+            xy[0] = fixc(wx4);
+            xy[1] = fixc(wy4);
+            xy[2] = fixc(wx5);
+            xy[3] = fixc(wy5);
+            xy[4] = fixc(wx2);
+            xy[5] = fixc(wy2);
+            xy[6] = fixc(MW(ar3 + ir0));
+            xy[7] = fixc(MW(ar3 + ir1));
             i0 = rdm(ar1); i1 = rdm(ar1 + 1); i2 = rdm(ar1 + 2);
             ar1 += 3;
-            pkt[10] = i0;
-            pkt[11] = i0 >> 16;
-            pkt[12] = i1;
-            pkt[13] = i1 >> 16;
-            pkt[14] = i2;
+            emit_pkt(xy, w0, w1, i0, i1, i2);               /* 048F LDI @FIFO_INC */
             i1 >>= 16;
-            vu.fifo_count = 0;
-            vu_poly_packet(pkt);                            /* 048F LDI @FIFO_INC */
             work += 25;
         }
         if ((int32_t)--rc < 0)                              /* fin del RPTB */
@@ -928,29 +931,22 @@ uint32_t hle_poly_emit_quad(void)
             return POP() & 0xFFFFFFu;
         }
         {
-            uint32_t pkt[15], i0;
+            uint32_t xy[8], w0, i0;
             wx3 = MW(ar3 + ir0);
-            pkt[0] = rdm(ar1);                               /* 057F */
+            w0 = rdm(ar1);                                   /* 057F */
             ar1 += 2;
-            pkt[1] = r6;                                    /* 0583 ... || STI R6 */
-            pkt[2] = fixc(wx4);
-            pkt[3] = fixc(wy4);
-            pkt[4] = fixc(wx5);
-            pkt[5] = fixc(wy5);
-            pkt[6] = fixc(wx2);
-            pkt[7] = fixc(wy2);
-            pkt[8] = fixc(wx3);
-            pkt[9] = fixc(wy3);
+            xy[0] = fixc(wx4);
+            xy[1] = fixc(wy4);
+            xy[2] = fixc(wx5);
+            xy[3] = fixc(wy5);
+            xy[4] = fixc(wx2);
+            xy[5] = fixc(wy2);
+            xy[6] = fixc(wx3);
+            xy[7] = fixc(wy3);
             i0 = rdm(ar1); i1 = rdm(ar1 + 1); i2 = rdm(ar1 + 2);
             ar1 += 3;
-            pkt[10] = i0;
-            pkt[11] = i0 >> 16;
-            pkt[12] = i1;
-            pkt[13] = i1 >> 16;
-            pkt[14] = i2;
+            emit_pkt(xy, w0, r6, i0, i1, i2);               /* 0583 STI R6 ... 0595 FIFO_INC */
             i1 >>= 16;
-            vu.fifo_count = 0;
-            vu_poly_packet(pkt);                            /* 0595 LDI @FIFO_INC */
             work += 23;
         }
         if ((int32_t)--rc < 0)                              /* fin del RPTB */

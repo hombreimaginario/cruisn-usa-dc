@@ -504,66 +504,80 @@ static void on_fifo_reset(void)
     restart_pending[(vu.page_control & 4) ? 1 : 0] = 1;
 }
 
-static void on_poly(const uint32_t *d, int page)
+static inline __attribute__((always_inline)) void store_poly(int page, int16_t x0, int16_t x1, int16_t x2, int16_t x3,
+                                                             int16_t y0, int16_t y1, int16_t y2, int16_t y3,
+                                                             uint32_t uv01, uint32_t uv23, uint32_t w0, uint32_t w1, uint32_t w14)
 {
+    packet *o;
     if (restart_pending[page]) {
         restart_pending[page] = 0;
         page_npolys[page] = 0;
     }
-    {
-        /* fuera de la pantalla de 512x400 por completo: no se guarda (entre
-         * un 5 y un 10 % en carretera: cielo y suelo en tiras de 256) */
-        int16_t x0 = (int16_t)d[2], x1 = (int16_t)d[4], x2 = (int16_t)d[6], x3 = (int16_t)d[8];
-        int16_t y0 = (int16_t)d[3], y1 = (int16_t)d[5], y2 = (int16_t)d[7], y3 = (int16_t)d[9];
-        packet *o;
-        if ((x0 < 0 && x1 < 0 && x2 < 0 && x3 < 0) || (x0 >= 512 && x1 >= 512 && x2 >= 512 && x3 >= 512) ||
-            (y0 < 0 && y1 < 0 && y2 < 0 && y3 < 0) || (y0 >= 400 && y1 >= 400 && y2 >= 400 && y3 >= 400))
-            return;
+    /* fuera de la pantalla de 512x400 por completo: no se guarda (entre
+     * un 5 y un 10 % en carretera: cielo y suelo en tiras de 256) */
+    if ((x0 < 0 && x1 < 0 && x2 < 0 && x3 < 0) || (x0 >= 512 && x1 >= 512 && x2 >= 512 && x3 >= 512) ||
+        (y0 < 0 && y1 < 0 && y2 < 0 && y3 < 0) || (y0 >= 400 && y1 >= 400 && y2 >= 400 && y3 >= 400))
+        return;
 #ifdef CUSA_POLYDBG
-        {
-            int m = 0, k;
-            int16_t c[8] = { x0, x1, x2, x3, y0, y1, y2, y3 };
-            for (k = 0; k < 8; k++) {
-                int a = c[k] < 0 ? -c[k] : c[k];
-                if (a > m) m = a;
-            }
-            if (m > dbg_maxc) dbg_maxc = m;
-            if (m > 2048) dbg_big++;
-            if (m > 8192) dbg_huge++;
+    {
+        int m = 0, k;
+        int16_t c[8] = { x0, x1, x2, x3, y0, y1, y2, y3 };
+        for (k = 0; k < 8; k++) {
+            int a = c[k] < 0 ? -c[k] : c[k];
+            if (a > m) m = a;
         }
-#endif
-        /* los cuatro vertices en el mismo pixel: no se veria nada (objetos
-         * lejanos con muchos poligonos) */
-        if (x0 == x1 && x0 == x2 && x0 == x3 && y0 == y1 && y0 == y2 && y0 == y3) {
-            stat_tiny++;
-            return;
-        }
-#ifdef CUSA_POLYDUMP
-        {
-            extern int cusa_frame;
-            if (cusa_frame >= CUSA_POLYDUMP && cusa_frame < CUSA_POLYDUMP + 3)
-                printf("POLY c0=%04X c1=%04X tb=%04X xy=%d,%d %d,%d %d,%d %d,%d uv=%04X %04X %04X %04X\n",
-                       (unsigned)(d[0] & 0xFFFF), (unsigned)(d[1] & 0xFFFF), (unsigned)(d[14] & 0xFFFF),
-                       x0, y0, x1, y1, x2, y2, x3, y3, (unsigned)(d[10] & 0xFFFF), (unsigned)(d[11] & 0xFFFF),
-                       (unsigned)(d[12] & 0xFFFF), (unsigned)(d[13] & 0xFFFF));
-        }
-#endif
-        if (page_npolys[page] >= MAX_POLYS)
-            return;
-        o = &page_polys[page][page_npolys[page]++];
-        o->x[0] = x0; o->x[1] = x1; o->x[2] = x2; o->x[3] = x3;
-        o->y[0] = y0; o->y[1] = y1; o->y[2] = y2; o->y[3] = y3;
-        o->uv[0] = (uint16_t)d[10]; o->uv[1] = (uint16_t)d[11];
-        o->uv[2] = (uint16_t)d[12]; o->uv[3] = (uint16_t)d[13];
-        o->c0 = (uint16_t)d[0]; o->c1 = (uint16_t)(d[1] & 0xFF00); o->tb = (uint16_t)d[14];
-        o->pad = 0;
-#ifndef CUSA_NO_FADE
-        if (vu_poly_fade < 63) {
-            o->pad = (uint16_t)(64 - vu_poly_fade);     /* 1..64: transparencia */
-            fade_polys++;
-        }
-#endif
+        if (m > dbg_maxc) dbg_maxc = m;
+        if (m > 2048) dbg_big++;
+        if (m > 8192) dbg_huge++;
     }
+#endif
+    /* los cuatro vertices en el mismo pixel: no se veria nada (objetos
+     * lejanos con muchos poligonos) */
+    if (x0 == x1 && x0 == x2 && x0 == x3 && y0 == y1 && y0 == y2 && y0 == y3) {
+        stat_tiny++;
+        return;
+    }
+#ifdef CUSA_POLYDUMP
+    {
+        extern int cusa_frame;
+        if (cusa_frame >= CUSA_POLYDUMP && cusa_frame < CUSA_POLYDUMP + 3)
+            printf("POLY c0=%04X c1=%04X tb=%04X xy=%d,%d %d,%d %d,%d %d,%d uv=%04X %04X %04X %04X\n",
+                   (unsigned)(w0 & 0xFFFF), (unsigned)(w1 & 0xFFFF), (unsigned)(w14 & 0xFFFF),
+                   x0, y0, x1, y1, x2, y2, x3, y3, (unsigned)(uv01 & 0xFFFF), (unsigned)(uv01 >> 16),
+                   (unsigned)(uv23 & 0xFFFF), (unsigned)(uv23 >> 16));
+    }
+#endif
+    if (page_npolys[page] >= MAX_POLYS)
+        return;
+    o = &page_polys[page][page_npolys[page]++];
+    o->x[0] = x0; o->x[1] = x1; o->x[2] = x2; o->x[3] = x3;
+    o->y[0] = y0; o->y[1] = y1; o->y[2] = y2; o->y[3] = y3;
+    o->uv[0] = (uint16_t)uv01; o->uv[1] = (uint16_t)(uv01 >> 16);
+    o->uv[2] = (uint16_t)uv23; o->uv[3] = (uint16_t)(uv23 >> 16);
+    o->c0 = (uint16_t)w0; o->c1 = (uint16_t)(w1 & 0xFF00); o->tb = (uint16_t)w14;
+    o->pad = 0;
+#ifndef CUSA_NO_FADE
+    if (vu_poly_fade < 63) {
+        o->pad = (uint16_t)(64 - vu_poly_fade);     /* 1..64: transparencia */
+        fade_polys++;
+    }
+#endif
+}
+
+/* paquete de 15 palabras por la FIFO emulada (codigo traducido) */
+static void on_poly(const uint32_t *d, int page)
+{
+    store_poly(page, (int16_t)d[2], (int16_t)d[4], (int16_t)d[6], (int16_t)d[8],
+               (int16_t)d[3], (int16_t)d[5], (int16_t)d[7], (int16_t)d[9],
+               (uint16_t)d[10] | ((uint32_t)(uint16_t)d[11] << 16),
+               (uint16_t)d[12] | ((uint32_t)(uint16_t)d[13] << 16), d[0], d[1], d[14]);
+}
+
+/* atajo del codigo HLE: sin pasar por el paquete de 15 palabras */
+static void on_poly_direct(const uint32_t *xy, uint32_t w0, uint32_t w1, uint32_t uv01, uint32_t uv23, uint32_t w14)
+{
+    store_poly((vu.page_control & 4) ? 1 : 0, (int16_t)xy[0], (int16_t)xy[2], (int16_t)xy[4], (int16_t)xy[6],
+               (int16_t)xy[1], (int16_t)xy[3], (int16_t)xy[5], (int16_t)xy[7], uv01, uv23, w0, w1, w14);
 }
 
 /* ---- envio al PVR ---- */
@@ -1176,6 +1190,7 @@ int pvrr_init(void)
 #endif
     printf("texturas: bloque de %u KB\n", (unsigned)(pool_bytes / 1024));
     vu_poly_hook = on_poly;
+    vu_poly_direct = on_poly_direct;
     vu_fifo_reset_hook = on_fifo_reset;
     return 0;
 }
