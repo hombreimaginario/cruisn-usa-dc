@@ -1295,8 +1295,8 @@ static int draw_loading(void)
     }
     pvr_list_finish();
     pvr_list_begin(PVR_LIST_PT_POLY);
-    /* logo 254x192 del arcade a la escala del port (1,25 x 1,2), centrado */
-    loading_quad(loading_logo, 256, 256, 160.0f, 70.0f, 480.0f, 300.4f, 192.0f / 256.0f);
+    /* logo 254x204 del arcade a la escala del port (1,25 x 1,2), centrado */
+    loading_quad(loading_logo, 256, 256, 160.0f, 70.0f, 480.0f, 314.8f, 204.0f / 256.0f);
     loading_quad(loading_text, 512, 64, 64.0f, 340.0f, 576.0f, 404.0f, 1.0f);
     pvr_list_finish();
     pvr_list_begin(PVR_LIST_TR_POLY);

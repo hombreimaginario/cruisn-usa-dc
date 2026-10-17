@@ -60,11 +60,12 @@ def main():
     with tempfile.TemporaryDirectory() as tmp:
         logo = texdump(tmp, 1000, 0x22FC, 0x3D, 256, "logo.ppm")
         font = texdump(tmp, 1440, 0x305B, 0x59, 40, "font.ppm", INPUT)
-    # logo: columnas 1..254, filas 0..191 (el resto de la pagina es otra cosa)
+    # logo: columnas 1..254, filas 0..203 (la punta del escudo acaba en la
+    # 201; debajo empieza otra cosa de la pagina)
     out = bytearray()
     for y in range(256):
         for x in range(256):
-            p = logo[y][x] if y < 192 and 1 <= x <= 254 else None
+            p = logo[y][x] if y < 204 and 1 <= x <= 254 else None
             out += struct.pack("<H", argb1555(p))
     # texto: "NOW LOADING" al doble de tamano, centrado en 512x64
     text = "NOW LOADING"

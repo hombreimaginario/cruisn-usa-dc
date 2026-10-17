@@ -698,9 +698,9 @@ static uint64_t t_boot;
 static void draw_loading_fb(const uint16_t *img)
 {
     int x, y;
-    for (y = 0; y < 231; y++) {
+    for (y = 0; y < 245; y++) {
         uint16_t *o = (uint16_t *)vram_s + (70 + y) * 640 + 160;
-        int sy = y * 192 / 231;
+        int sy = y * 204 / 245;
         for (x = 0; x < 320; x++) {
             uint16_t c = img[sy * 256 + x * 256 / 320];
             o[x] = (c & 0x8000) ? (uint16_t)(((c & 0x7FE0) << 1) | (c & 0x1F)) : 0;
