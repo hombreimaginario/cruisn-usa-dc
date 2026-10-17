@@ -129,7 +129,7 @@ static void *load_file(const char *path, size_t *size_out)
  * radio): con los secretos activos el port anade las vistas que toca segun
  * la pista senalada (_MODE en C8C5, CHOSEN_RACE en E634; las carreras 1, 6 y
  * 9 tienen version oculta). Al elegir coche o pista se muestra el rotulo
- * PRESS X FOR HIDDEN/NORMAL CARS/TRACKS (tools/make_texts.py).
+ * PRESS X FOR HIDDEN/DEFAULT CARS/TRACKS (tools/make_texts.py).
  */
 static int hidden_on;
 
@@ -157,7 +157,7 @@ static void hidden_text(void)
     } else if ((mode & 0x2CF) == 0x203) {
         pvrr_text_row = hidden_on ? 3 : 2;
         pvrr_text_y = 208.0f;                   /* bajo CHOOSE RACE, en el hueco */
-        pvrr_text_scale = 0.95f;                /* hasta los iconos hay 13 pixeles */
+        pvrr_text_scale = 1.0f;
     }
 }
 
