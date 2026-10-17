@@ -114,7 +114,7 @@ static __attribute__((noinline, unused)) float c3x_to_float_slow(uint32_t v)
 static inline __attribute__((always_inline)) float c3x_to_float(uint32_t v)
 {
     union { uint32_t u; float f; } out;
-    uint32_t neg = 0u - ((v >> 23) & 1u);
+    uint32_t neg;
     uint32_t frac = v & 0x7FFFFFu;
     uint32_t be = ((v >> 24) + 127u) & 0xFFu;   /* exponente IEEE */
 
@@ -123,8 +123,13 @@ static inline __attribute__((always_inline)) float c3x_to_float(uint32_t v)
             return 0.0f;
         return c3x_to_float_slow(v);
     }
+    if (__builtin_expect(!(v & 0x800000u), 1)) {  /* positivo: misma mantisa */
+        out.u = (be << 23) + frac;
+        return out.f;
+    }
     /* negativo: mantisa 1 - f (con f = 0 sube al exponente siguiente) */
-    out.u = (neg & 0x80000000u) | ((be << 23) + (((frac ^ neg) - neg) + (neg & 0x800000u)));
+    neg = 0u - 1u;
+    out.u = 0x80000000u | ((be << 23) + (((frac ^ neg) - neg) + 0x800000u));
     return out.f;
 }
 
@@ -164,6 +169,14 @@ static inline __attribute__((always_inline)) uint32_t float_to_c3x(float x)
     uint32_t ie, mant, neg, e24, nm;
 
     in.f = x;
+    if (__builtin_expect((int32_t)in.u >= 0, 1)) {
+        /* positivo: misma mantisa, exponente - 127 en el byte alto:
+         * u + (u & 0x7F800000) - 0x7F000000 (comprobado para todo u) */
+        ie = in.u >> 23;
+        if (__builtin_expect(ie - 1u >= 254u, 0))
+            return ie == 0 ? 0x80000000u : float_to_c3x_slow(x);
+        return in.u + (in.u & 0x7F800000u) - 0x7F000000u;
+    }
     ie = (in.u >> 23) & 0xFFu;
     if (__builtin_expect(ie - 1u >= 254u, 0)) {
         if (ie == 0)                             /* cero y desnormales */
