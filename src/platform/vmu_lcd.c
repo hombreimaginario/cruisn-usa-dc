@@ -1,5 +1,5 @@
 /*
- * vmu_lcd.c - Pantalla de la VMU: logo en el modo demo y, en carrera,
+ * vmu_lcd.c - Pantalla de la VMU: logo de Midway en el modo demo y, en carrera,
  * posicion y velocidad.
  *
  * (Fuente de 5x7 propia.) Lee del juego (direcciones de la ROM L4.1, buscadas comparando volcados de
@@ -42,7 +42,7 @@ static const struct { char c; uint8_t col[5]; } font[] = {
     { 'N', { 0x7F, 0x04, 0x08, 0x10, 0x7F } }, { 'P', { 0x7F, 0x09, 0x09, 0x09, 0x06 } },
     { 'R', { 0x7F, 0x09, 0x19, 0x29, 0x46 } }, { 'S', { 0x46, 0x49, 0x49, 0x49, 0x31 } },
     { 'T', { 0x01, 0x01, 0x7F, 0x01, 0x01 } }, { 'U', { 0x3F, 0x40, 0x40, 0x40, 0x3F } },
-    { 'L', { 0x7F, 0x40, 0x40, 0x40, 0x40 } }, { '\'', { 0x07, 0x00, 0x00, 0x00, 0x00 } },
+    { 'L', { 0x7F, 0x40, 0x40, 0x40, 0x40 } },
 };
 
 static const uint8_t *glyph(char c)
@@ -84,25 +84,31 @@ static int text_width(const char *s, int scale)
     return w - scale;
 }
 
-static void rect(int x0, int y0, int x1, int y1)
-{
-    int x, y;
-    for (x = x0; x <= x1; x++) {
-        pix[y0][x] = 1;
-        pix[y1][x] = 1;
-    }
-    for (y = y0; y <= y1; y++) {
-        pix[y][x0] = 1;
-        pix[y][x1] = 1;
-    }
-}
+/* Logo de Midway (solo el texto, sin el icono ni la marca registrada),
+ * redibujado a mano para 48 puntos de ancho: reducido del original las
+ * letras se juntaban */
+static const char *const midway[12] = {
+    "  ##    ## ## #####   ##    ##   ###   ##    ## ",
+    "  ###  ### ## ######  ##    ##  #####  ##    ## ",
+    "  ######## ## ##  ### ##    ## ### ### ##    ## ",
+    "  ## ## ## ## ##   ## ##    ## ##   ## ###  ### ",
+    " ## ## ## ## ##   ## ##    ## ##   ##  ######   ",
+    " ##    ## ## ##   ## ##    ## ##   ##   ####    ",
+    " ##    ## ## ##   ## ##    ## #######    ##     ",
+    " ##    ## ## ##   ## ## ## ## #######    ##     ",
+    "##    ## ## ##   ## ## ## ## ##   ##    ##      ",
+    "##    ## ## ##  ### ######## ##   ##    ##      ",
+    "##    ## ## ######  ###  ### ##   ##    ##      ",
+    "##    ## ## #####   ##    ## ##   ##    ##      ",
+};
 
 static void draw_logo(void)
 {
+    int x, y;
     memset(pix, 0, sizeof(pix));
-    text((W - text_width("CRUIS'N", 1)) / 2, 2, "CRUIS'N", 1);
-    rect(4, 11, 43, 30);                 /* placa de autopista */
-    text((W - text_width("USA", 2)) / 2, 14, "USA", 2);
+    for (y = 0; y < 12; y++)
+        for (x = 0; x < W; x++)
+            pix[10 + y][x] = midway[y][x] == '#';
 }
 
 static void draw_race(int pos, int mph)
