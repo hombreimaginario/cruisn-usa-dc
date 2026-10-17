@@ -115,10 +115,33 @@ static void *load_file(const char *path, size_t *size_out)
 #define SW_3RD     0x00000800u
 #define SW_2ND     0x00001000u
 #define SW_1ST     0x00002000u
+#define SW_VIEW0   0x00100000u      /* los tres botones de vista del mueble */
 #define SW_VIEW1   0x00200000u
 #define SW_VIEW2   0x00400000u
-#define SW_VIEW3   0x00800000u
 #define SW_RADIO   0x00020000u
+
+/*
+ * Coches y pistas ocultos del arcade (INTRO.ASM HIDDEN_VEHICLES, TRACKSEL.ASM
+ * HIDDEN_TRACKS, INTRO.ASM "Secret Button Combo"): se activan manteniendo
+ * pulsados dos botones de vista al elegir coche o pista, y radio mas las tres
+ * vistas al pulsar START en la pantalla de continuar (recorrer todo el pais).
+ * Con el mando, X (radio) hace de modificador fuera de la carrera: el port
+ * anade las vistas que toca segun la pista senalada (_MODE en C8C5,
+ * CHOSEN_RACE en E634; carreras 1, 6 y 9 tienen version oculta).
+ */
+static uint32_t hidden_mod(uint32_t sw)
+{
+    uint32_t mode = vu.fastram[0xC8C5] & 0xF, race = vu.fastram[0xE634];
+    if (mode == 4)                              /* MGAME: X solo es la radio */
+        return sw;
+    if (mode == 7)                              /* MINSERT_COINS: continuar */
+        return sw | SW_VIEW0 | SW_VIEW1 | SW_VIEW2;
+    if (race == 6)
+        return sw | SW_VIEW0 | SW_VIEW2;
+    if (race == 9)
+        return sw | SW_VIEW1 | SW_VIEW2;
+    return sw | SW_VIEW0 | SW_VIEW1;            /* pista 1 y coches ocultos */
+}
 
 static int gear;
 
@@ -154,7 +177,7 @@ static void read_inputs(void)
     sw |= gears[gear];
     {
         /* las vistas son tres botones en el arcade; Y las recorre */
-        static const uint32_t views[3] = { SW_VIEW1, SW_VIEW2, SW_VIEW3 };
+        static const uint32_t views[3] = { SW_VIEW0, SW_VIEW1, SW_VIEW2 };
         static int view, view_hold;
         if ((b & CONT_Y) && !(prev & CONT_Y) && !(b & CONT_START)) {
             view = (view + 1) % 3;
@@ -166,7 +189,7 @@ static void read_inputs(void)
         }
     }
     if (b & CONT_X)
-        sw |= SW_RADIO;
+        sw = hidden_mod(sw | SW_RADIO);
     prev = b;
 
     vu.in.switches = sw;
@@ -201,6 +224,10 @@ static void read_inputs(void)
             sw |= SW_COIN1;
         if (f >= 1300 && f <= 2300 && (f - 1300) % 200 < 5)
             sw |= SW_START;
+#ifdef AUTO_HIDDEN
+        if (f >= 1250 && f < 2400)      /* como X pulsado al elegir */
+            sw = hidden_mod(sw | SW_RADIO);
+#endif
         vu.in.switches = sw;
         vu.in.wheel = 0x80;
 #ifdef AUTO_WHEEL

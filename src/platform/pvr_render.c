@@ -309,7 +309,11 @@ static int convert(tex_entry *t, const tex_req *r, uint32_t pixdata)
     vram_guard();
     d = sq_lock((void *)(((uintptr_t)t->ptr & 0xFFFFFF) | PVR_TA_TEX_MEM));
     for (y = 0; y < t->h; y++) {
-        const uint8_t *row = src + ((r->base * 256 + ((r->v0 + y * st) & 0xFF) * 256) & (sizeof(vu.texram) - 1));
+        /* a media resolucion se toman las filas y columnas impares: la
+         * primera fila de la zona (par) puede ser de otra textura o estar
+         * vacia, y el borde del poligono la muestreaba (linea negra
+         * discontinua en el horizonte, entre el cielo y el mar) */
+        const uint8_t *row = src + ((r->base * 256 + ((r->v0 + y * st + (st - 1)) & 0xFF) * 256) & (sizeof(vu.texram) - 1));
         /* con 8 de ancho caben dos lineas en cada bloque de 32 bytes */
         uint16_t *o = rowbuf + (w == 8 ? (y & 1) * 8 : 0);
         const uint32_t *q = (const uint32_t *)rowbuf;
@@ -323,7 +327,7 @@ static int convert(tex_entry *t, const tex_req *r, uint32_t pixdata)
             }
         } else {
             for (x = 0; x < w; x++)
-                *o++ = lut[row[(r->u0 + x * st) & 0xFF]];
+                *o++ = lut[row[(r->u0 + x * st + (st - 1)) & 0xFF]];
         }
         if (w == 8 && !(y & 1))
             continue;
