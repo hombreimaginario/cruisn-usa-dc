@@ -433,9 +433,9 @@ void rt_platform_event(void)
 #endif
     vblank();
 }
-#else
+#elif defined(CUSA_RT_VBLANK)
 /*
- * Interrupcion de video a 57 Hz de tiempo real, como en la placa: si el
+ * (Antiguo, -DCUSA_RT_VBLANK) Interrupcion de video a 57 Hz de tiempo real, como en la placa: si el
  * SH-4 no termina un frame del juego a tiempo, el juego ve pasar mas
  * interrupciones (NFRAMES) y mueve todo en proporcion, igual que el original
  * cuando una escena le cuesta. Se pierden imagenes por segundo pero el juego
@@ -549,6 +549,144 @@ void rt_platform_event(void)
     if (game_inframes() >= NFRAMES_MAX - 1) dv_forced++; else dv_event++;
 #endif
     vblank_due(now);
+}
+#else
+/*
+ * Interrupcion de video con el reloj del arcade y el tiempo real a la vez.
+ *
+ * Cada interrupcion llega cuando el codigo traducido ha gastado los ciclos
+ * que el C31 tardaria (INSNS_PER_FRAME por interrupcion, como en el
+ * ordenador, que da las mismas NFRAMES que MAME): asi el juego ve las mismas
+ * interrupciones por frame que en la placa (1 en los menus, 2 en carrera) y
+ * los menus y la demo van al ritmo del original. Al esperar la interrupcion
+ * (bucle MWAIT) se espera tambien al tiempo real, de modo que a la larga van
+ * 57 por segundo.
+ *
+ * Si el SH-4 va mas lento que el C31 (carreras cargadas), la interrupcion
+ * llega igualmente a su hora de tiempo real (mas VBL_LAG_US): el juego ve
+ * mas NFRAMES y sigue a su velocidad, como antes. Con VBL_LAG_US > 0 se
+ * permite ir algo a camara lenta a cambio de un ritmo mas regular.
+ *
+ * Antes solo contaba el tiempo real: en las pantallas ligeras el SH-4 va
+ * mucho mas rapido que el C31 y las animaciones que avanzan por frame del
+ * juego (no por NFRAMES) iban aceleradas (selector de cambio); y las
+ * recuperaciones de atrasos daban tirones en la demo y al elegir coche.
+ */
+#define VBL_US 17544                    /* 1/57 s */
+#ifndef NFRAMES_MAX
+#define NFRAMES_MAX 3
+#endif
+#ifndef VBL_DEBT
+#define VBL_DEBT 2
+#endif
+#ifndef VBL_LAG_US
+#define VBL_LAG_US 0
+#endif
+#ifndef VBL_HOLD_US
+#define VBL_HOLD_US 8000
+#endif
+/*
+ * Reloj del juego (us): avanza con los ciclos emulados, VBL_US cada
+ * INSNS_PER_FRAME. Si se queda atrasado respecto al tiempo real mas de
+ * VBL_LAG_US, se adelanta (el SH-4 no llega); si va mas de 4 interrupciones
+ * por delante (fases largas sin esperar), se frena. Las interrupciones
+ * llegan cuando este reloj pasa por next_vt.
+ */
+static uint64_t vt_base, vt_cyc, next_vt;
+static int vbl_since_flip, last_flip_page = -1;
+
+static inline uint32_t game_inframes(void)
+{
+    return vu.fastram[0xC930];
+}
+
+static inline uint64_t game_clock(void)
+{
+    return vt_base + (rt_cycles() - vt_cyc) * VBL_US / INSNS_PER_FRAME;
+}
+
+static inline void clock_set(uint64_t t)
+{
+    vt_base = t;
+    vt_cyc = rt_cycles();
+}
+
+static void clock_start(uint64_t now)
+{
+    if (!next_vt) {
+        clock_set(now);
+        next_vt = now + VBL_US;
+    }
+}
+
+static void fire_vblank(uint64_t vt)
+{
+    next_vt += VBL_US;
+    if (next_vt + VBL_DEBT * VBL_US < vt)   /* muy atrasado: no se acumula */
+        next_vt = vt + VBL_US;
+    vblank();
+    if ((vu.page_control & 1) != last_flip_page) {
+        last_flip_page = vu.page_control & 1;
+        vbl_hist[vbl_since_flip < 4 ? vbl_since_flip : 4]++;
+        vbl_since_flip = 0;
+    } else {
+        vbl_since_flip++;
+    }
+}
+
+void rt_platform_idle(void)
+{
+    uint64_t now, t;
+
+    if (vu.adc_irq_delay) {             /* conversion del ADC: sin esperar */
+        while (vu.adc_irq_delay)
+            vu_tick();
+        return;
+    }
+    now = t = timer_us_gettime64();
+    clock_start(now);
+    /* El juego espera a la siguiente interrupcion: el C31 gastaria esos
+     * ciclos esperando; aqui el reloj salta a ella y se espera a su hora de
+     * tiempo real */
+    if (game_clock() < next_vt)
+        clock_set(next_vt);
+    while (now < next_vt) {
+        thd_pass();
+        now = timer_us_gettime64();
+    }
+    idle_us += now - t;
+    fire_vblank(next_vt > now ? next_vt : now);
+}
+
+void rt_platform_event(void)
+{
+    uint64_t now, vt;
+
+    vu_tick();
+    now = timer_us_gettime64();
+    clock_start(now);
+    vt = game_clock();
+    /* Como mucho NFRAMES_MAX interrupciones por frame del juego (con mas se
+     * saltan choques): la que sobra espera a que el juego termine su frame,
+     * salvo que lleve mucho sin esperar (bucles no detectados) */
+    if (game_inframes() >= NFRAMES_MAX - 1 && now < next_vt + VBL_LAG_US + 4 * VBL_US)
+        return;
+    if (vt < next_vt) {
+        if (now < next_vt + VBL_LAG_US)
+            return;
+        /* El SH-4 va por detras del C31: el reloj sigue al tiempo real. La
+         * segunda interrupcion del frame se puede retrasar un poco si el
+         * juego esta a punto de terminar (un frame de 36 ms no espera a la
+         * tercera); el calendario no cambia. */
+        if (game_inframes() == 1 && now < next_vt + VBL_LAG_US + VBL_HOLD_US)
+            return;
+        vt = now - VBL_LAG_US;
+        clock_set(vt);
+    } else if (vt > now + 4 * VBL_US) {
+        vt = now + 4 * VBL_US;
+        clock_set(vt);
+    }
+    fire_vblank(vt);
 }
 #endif
 #endif

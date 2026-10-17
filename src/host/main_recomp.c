@@ -340,6 +340,14 @@ void rt_platform_event(void)
     if (rt_cycles() < frame_end)
         return;
     frame++;
+    if (getenv("CUSA_NFHIST")) {        /* NFRAMES por tramos de 100 frames */
+        static unsigned h[8];
+        h[vu.fastram[0xC92F] & 7]++;
+        if (frame % 100 == 0) {
+            printf("B%d 1:%u 2:%u 3:%u 4:%u 5+:%u\n", frame - 100, h[1], h[2], h[3], h[4], h[5] + h[6] + h[7]);
+            memset(h, 0, sizeof(h));
+        }
+    }
     if (sound_wav)
         sound_preview_frame();
     frame_end += insns_per_frame;
