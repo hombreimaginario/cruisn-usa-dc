@@ -153,9 +153,11 @@ static void hidden_text(void)
     if ((mode & 0x2CF) == 0x2C3) {
         pvrr_text_row = hidden_on ? 1 : 0;
         pvrr_text_y = 97.0f;                    /* entre CHOOSE CAR y las fichas */
+        pvrr_text_scale = 1.0f;
     } else if ((mode & 0x2CF) == 0x203) {
         pvrr_text_row = hidden_on ? 3 : 2;
-        pvrr_text_y = 209.0f;                   /* bajo CHOOSE RACE */
+        pvrr_text_y = 208.0f;                   /* bajo CHOOSE RACE, en el hueco */
+        pvrr_text_scale = 0.78f;                /* hasta los iconos hay 15 pixeles */
     }
 }
 

@@ -921,7 +921,7 @@ static void diag_draw(void)
 
 static void text_draw(void);
 int pvrr_text_row = -1;
-float pvrr_text_y;
+float pvrr_text_y, pvrr_text_scale = 1.0f;
 static const uint32_t *texts_img;
 static pvr_ptr_t texts_tex;
 
@@ -1275,15 +1275,15 @@ static void text_draw(void)
     float w, x0, y0, x1, y1, v0, v1;
     if (row < 0 || row > 3 || !texts_tex)
         return;
-    w = (float)texts_img[row];
+    w = (float)texts_img[row] * pvrr_text_scale;
     x0 = (256.0f - w * 0.5f) * SX;
-    x1 = x0 + 512.0f * SX;              /* la fila entera; lo que sobra es transparente */
+    x1 = x0 + 512.0f * pvrr_text_scale * SX;    /* la fila entera; lo que sobra es transparente */
     y0 = pvrr_text_y * SY;
-    y1 = y0 + 24.0f * SY;
+    y1 = y0 + 24.0f * pvrr_text_scale * SY;
     v0 = (float)row * 24.0f / 128.0f;
     v1 = v0 + 24.0f / 128.0f;
     pvr_poly_cxt_txr(&cxt, PVR_LIST_PT_POLY, PVR_TXRFMT_ARGB1555 | PVR_TXRFMT_NONTWIDDLED,
-                     512, 128, texts_tex, PVR_FILTER_NONE);
+                     512, 128, texts_tex, pvrr_text_scale < 1.0f ? PVR_FILTER_BILINEAR : PVR_FILTER_NONE);
     cxt.gen.culling = PVR_CULLING_NONE;
     pvr_poly_compile(&hdr, &cxt);
     pvr_prim(&hdr, sizeof(hdr));
